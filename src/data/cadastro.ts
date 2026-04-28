@@ -478,9 +478,10 @@ export const cadastroOptionSets = {
 } as const;
 
 export const cadastroSteps: CadastroStepDefinition[] = [
-  { key: 'dados-gerais', label: 'Dados Gerais', description: 'Base cadastral do instrumento, prazos, vigência, repasses e campos calculados.', scope: 'inicial' },
-  { key: 'plano-trabalho', label: 'Plano de Ação', description: 'Itens autorizados, classificação estratégica, ajuste e saldo por linha.', scope: 'inicial' },
-  { key: 'documentos', label: 'Documentos Iniciais', description: 'Termos e documentos essenciais do instrumento original.', scope: 'inicial' },
+  { key: 'dados-gerais', label: 'Dados Gerais', description: 'Informações básicas do processo.', scope: 'inicial' },
+  { key: 'plano-trabalho', label: 'Plano de Trabalho', description: 'Objetivos, metas e atividades.', scope: 'inicial' },
+  { key: 'documentos', label: 'Documentos', description: 'Anexos obrigatórios.', scope: 'inicial' },
+  { key: 'filtros', label: 'Filtros', description: 'Regras e configurações.', scope: 'inicial' },
 ];
 
 export function createPlanoItem(): PlanoItemForm {

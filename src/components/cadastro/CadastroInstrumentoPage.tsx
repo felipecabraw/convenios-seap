@@ -127,9 +127,11 @@ function updatePlanoItems(current: CadastroInstrumentoFormData, nextItems: Plano
 
 export function CadastroInstrumentoPage({
   onSave,
+  onCancel,
   initialData,
 }: {
   onSave: (data: CadastroInstrumentoFormData) => void;
+  onCancel?: () => void;
   initialData?: CadastroInstrumentoFormData;
 }) {
   const steps = cadastroSteps;
@@ -375,25 +377,53 @@ export function CadastroInstrumentoPage({
   }
 
   const currentStep = steps[activeStep] ?? firstStep;
+  const isDraftClean = validation.totalMissing === 0;
+  const summaryRows = [
+    { icon: 'description', label: 'Tipo de Processo', value: syncCalculatedFields.dadosGerais.instrumento || '-' },
+    { icon: 'account_balance', label: 'Órgão Concedente', value: 'SEAP/RN' },
+    { icon: 'domain', label: 'Setor / Entidade', value: syncCalculatedFields.dadosGerais.setorCorrelacionado || '-' },
+    {
+      icon: 'event',
+      label: 'Data de Atuação',
+      value: syncCalculatedFields.dadosGerais.anoFormalizacao || syncCalculatedFields.dadosGerais.prazoValidade || '-',
+    },
+    { icon: 'schedule', label: 'Vigência', value: syncCalculatedFields.dadosGerais.diasRestantes || '-' },
+    { icon: 'payments', label: 'Valor Global', value: syncCalculatedFields.dadosGerais.valorGlobal || 'R$ 0,00' },
+    { icon: 'radio_button_checked', label: 'Situação', value: syncCalculatedFields.dadosGerais.status || 'Em elaboração', badge: true },
+  ];
 
   return (
-    <section className="view cadastro-view">
-      <header className="page-head cadastro-hero">
-        <div className="crumbs">
-          <span className="crumb">Processos</span>
-          <span className="crumb">Inventário de Instrumentos</span>
-          <span className="crumb is-current">Novo Processo</span>
-        </div>
-
-        <div className="page-head__row">
-          <div className="page-head__copy">
-            <h2 className="cadastro-hero__title">Novo Processo</h2>
-            <p>
-              Registro institucional do instrumento com campos padronizados para identificação, vigência, repasses,
-              contratação e acompanhamento no SIGINP.
-            </p>
+    <section className={`view cadastro-view cadastro-view--reference cadastro-view--${currentStep.key}`}>
+      <header className="cadastro-page-head">
+        <div className="cadastro-page-head__top">
+          <div className="crumbs cadastro-crumbs">
+            <span className="crumb">Início</span>
+            <span className="crumb">Processos</span>
+            <span className="crumb is-current">Novo Processo</span>
           </div>
 
+          <div className="cadastro-page-head__actions">
+            <button type="button" className="cadastro-icon-button" onClick={onCancel} aria-label="Voltar">
+              <span className="material-symbols-outlined" aria-hidden="true">arrow_back</span>
+              <strong>Voltar</strong>
+            </button>
+            <button type="button" className="cadastro-round-button" aria-label="Ajuda">
+              <span className="material-symbols-outlined" aria-hidden="true">help</span>
+            </button>
+            <button type="button" className="cadastro-round-button" aria-label="Notificações">
+              <span className="material-symbols-outlined" aria-hidden="true">notifications</span>
+            </button>
+            <span className="cadastro-avatar" aria-label="Perfil">FC</span>
+          </div>
+        </div>
+
+        <div className="cadastro-page-head__copy">
+          <div className="cadastro-page-head__copy-inner">
+            <h2>Novo Processo</h2>
+            <p>
+              Preencha as informações para iniciar o cadastro de um novo processo.
+            </p>
+          </div>
         </div>
       </header>
 
@@ -402,7 +432,7 @@ export function CadastroInstrumentoPage({
       </div>
 
       <div className="cadastro-scroll-area">
-        <div className="cadastro-content cadastro-content--full">
+        <div className="cadastro-content cadastro-content--with-summary">
           <section className="cadastro-panel">
             <div className="cadastro-panel__header">
               <div>
@@ -417,43 +447,39 @@ export function CadastroInstrumentoPage({
             {renderStep()}
           </section>
 
-          {false ? (
-            <aside className="cadastro-sidebar">
-              <article className="cadastro-sidebar__card cadastro-sidebar__card--dark">
-                <div className="section-kicker section-kicker--inverse">Operação institucional</div>
-                <strong>{validation.canSave ? 'Cadastro pronto para avançar' : 'Complete as pendências da etapa atual'}</strong>
-                <p>
-                  {currentStepMissingCount
-                    ? `Faltam ${currentStepMissingCount} campo${currentStepMissingCount === 1 ? '' : 's'} essencial${currentStepMissingCount === 1 ? '' : 'is'} nesta etapa.`
-                    : 'A leitura da etapa está consistente e pronta para continuidade.'}
-                </p>
-              </article>
+          <aside className="cadastro-summary-card" aria-label="Resumo do cadastro">
+            <div className="cadastro-summary-card__head">
+              <span className="material-symbols-outlined" aria-hidden="true">clinical_notes</span>
+              <h3>Resumo do cadastro</h3>
+            </div>
 
-              <article className="cadastro-sidebar__card cadastro-sidebar__card--soft">
-                <div className="section-kicker">Encaminhamento</div>
-                <strong>
-                  {validation.firstIncompleteStep
-                    ? 'Use o botão abaixo para ir direto à primeira pendência.'
-                    : 'Siga para a próxima etapa quando concluir esta seção.'}
-                </strong>
-                <p>
-                  O fluxo está organizado para reduzir retrabalho e manter a formalização em ordem.
-                </p>
-                {validation.firstIncompleteStep ? (
-                  <button
-                    type="button"
-                    className="button button--secondary cadastro-sidebar__button"
-                    onClick={() => {
-                      const targetIndex = steps.findIndex((step) => step.key === validation.firstIncompleteStep);
-                      if (targetIndex >= 0) setActiveStep(targetIndex);
-                    }}
-                  >
-                    Ir para a primeira pendência
-                  </button>
-                ) : null}
-              </article>
-            </aside>
-          ) : null}
+            <div className={isDraftClean ? 'cadastro-save-state is-complete' : 'cadastro-save-state'}>
+              <div>
+                <strong>{isDraftClean ? 'Cadastro completo' : 'Rascunho salvo'}</strong>
+                <span>{currentStepMissingCount ? `${currentStepMissingCount} pendência(s) nesta etapa` : 'Última atualização: agora'}</span>
+              </div>
+              <span className="material-symbols-outlined" aria-hidden="true">
+                {isDraftClean ? 'check_circle' : 'task_alt'}
+              </span>
+            </div>
+
+            <div className="cadastro-summary-list">
+              {summaryRows.map((row) => (
+                <div key={row.label} className="cadastro-summary-row">
+                  <span className="material-symbols-outlined" aria-hidden="true">{row.icon}</span>
+                  <div>
+                    <small>{row.label}</small>
+                    {row.badge ? <strong className="cadastro-summary-badge">{row.value}</strong> : <strong>{row.value}</strong>}
+                  </div>
+                </div>
+              ))}
+            </div>
+
+            <div className="cadastro-summary-note">
+              <span className="material-symbols-outlined" aria-hidden="true">info</span>
+              <p>Após avançar, você poderá preencher o Plano de Trabalho e anexar os documentos obrigatórios.</p>
+            </div>
+          </aside>
         </div>
 
         <footer className="cadastro-footer">
@@ -463,7 +489,7 @@ export function CadastroInstrumentoPage({
             onClick={() => setActiveStep((step) => Math.max(step - 1, 0))}
             disabled={activeStep === 0}
           >
-            Etapa anterior
+            Voltar
           </button>
           <div className="cadastro-footer__hint" role="status" aria-live="polite">
             <svg
@@ -495,7 +521,7 @@ export function CadastroInstrumentoPage({
               setActiveStep((step) => Math.min(step + 1, steps.length - 1));
             }}
           >
-            {activeStep === steps.length - 1 ? (validation.canSave ? 'Salvar instrumento' : 'Ir para pendências') : 'Próxima etapa'}
+            {activeStep === steps.length - 1 ? (validation.canSave ? 'Salvar cadastro' : 'Ir para pendências') : 'Avançar'}
           </button>
         </footer>
       </div>

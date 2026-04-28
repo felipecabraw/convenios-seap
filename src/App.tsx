@@ -3,7 +3,6 @@ import type { CSSProperties } from 'react';
 import { CadastroInstrumentoPage } from './components/cadastro/CadastroInstrumentoPage';
 import { AjustePtStep } from './components/cadastro/steps/AjustePtStep';
 import { GestaoInstrumentoStep } from './components/cadastro/steps/GestaoInstrumentoStep';
-import { PrestacaoContasStep } from './components/cadastro/steps/PrestacaoContasStep';
 import { ProcessoContratacaoStep } from './components/cadastro/steps/ProcessoContratacaoStep';
 import {
   sidebarItems,
@@ -14,7 +13,6 @@ import {
   AjustePtForm,
   cadastroOptionSets,
   GestaoInstrumentoForm,
-  PrestacaoContasForm,
   PrestacaoItemForm,
   ProcessoContratacaoForm,
   ProcessoContratacaoRegistro,
@@ -41,7 +39,6 @@ import {
   buildPrestacaoMetrics,
   createDraftFromRecord,
   createRecordFromCadastro,
-  DeadlineTone,
   loadProcessosDatabase,
   ProcessosRecord,
   ProcessosDatabase,
@@ -363,68 +360,6 @@ function App() {
     });
   }
 
-  function updateSelectedPrestacao<K extends keyof PrestacaoContasForm>(field: K, value: PrestacaoContasForm[K]) {
-    setProcessosDb((current) => {
-      const recordId = current.selectedRecordId;
-      const target = current.records.find((record) => record.id === recordId);
-      if (!target) return current;
-
-      const updatedRecord: ProcessosRecord = {
-        ...target,
-        updatedAt: new Date().toISOString(),
-        cadastro: {
-          ...target.cadastro,
-          prestacaoContas: {
-            ...target.cadastro.prestacaoContas,
-            [field]: value,
-          },
-        },
-      };
-
-      return {
-        ...current,
-        records: current.records.map((record) => (record.id === recordId ? updatedRecord : record)),
-        lastSyncAt: new Date().toISOString(),
-      };
-    });
-  }
-
-  function updateSelectedPrestacaoItem(itemId: string, field: keyof PrestacaoItemForm, value: string) {
-    setProcessosDb((current) => {
-      const recordId = current.selectedRecordId;
-      const target = current.records.find((record) => record.id === recordId);
-      if (!target) return current;
-
-      const syncedItems = syncPrestacaoItemsForRecord(target);
-      const nextItems = syncedItems.map((item) =>
-        item.itemPlanoId === itemId
-          ? {
-              ...item,
-              [field]: value,
-            }
-          : item,
-      );
-
-      const updatedRecord: ProcessosRecord = {
-        ...target,
-        updatedAt: new Date().toISOString(),
-        cadastro: {
-          ...target.cadastro,
-          prestacaoContas: {
-            ...target.cadastro.prestacaoContas,
-            itens: nextItems,
-          },
-        },
-      };
-
-      return {
-        ...current,
-        records: current.records.map((record) => (record.id === recordId ? updatedRecord : record)),
-        lastSyncAt: new Date().toISOString(),
-      };
-    });
-  }
-
   function updateSelectedContratacaoDraft<K extends keyof ProcessoContratacaoForm>(field: K, value: ProcessoContratacaoForm[K]) {
     setProcessosDb((current) => {
       const recordId = current.selectedRecordId;
@@ -549,7 +484,7 @@ function App() {
   }
 
   return (
-    <div className="app-shell">
+    <div className={`app-shell app-shell--${activeView}${isCadastroOpen ? ' app-shell--cadastro' : ''}`}>
       <aside className="side-rail">
         <div className="brand-block">
           <div className="brand-mark">
@@ -570,7 +505,7 @@ function App() {
             <button
               key={item.key}
               type="button"
-              className={item.key === activeSidebarKey ? 'side-nav__item is-active' : 'side-nav__item'}
+              className={item.key === activeSidebarKey ? `side-nav__item side-nav__item--${item.key} is-active` : `side-nav__item side-nav__item--${item.key}`}
               style={
                 isActive
                   ? ({
@@ -643,6 +578,11 @@ function App() {
           {isCadastroOpen && activeView === 'dados' ? (
             <CadastroInstrumentoPage
               onSave={handleSaveCadastro}
+              onCancel={() => {
+                setIsCadastroOpen(false);
+                setEditingRecordId(null);
+                setActiveView('dados');
+              }}
               initialData={editingRecord ? createDraftFromRecord(editingRecord) : undefined}
             />
           ) : (
@@ -659,14 +599,13 @@ function App() {
               handleOpenContratacao,
               handleViewRecord,
               handleSelectRecord,
+              () => setActiveView('dados'),
               dashboardUpdatedAt,
               updateSelectedContratacaoDraft,
               replaceSelectedContratacaoDraft,
               updateSelectedContratacaoRecords,
               updateSelectedGestao,
               updateSelectedAjuste,
-              updateSelectedPrestacao,
-              updateSelectedPrestacaoItem,
             )
           )}
         </main>
@@ -689,14 +628,13 @@ function renderView(
   onOpenContratacao: (recordId: string) => void,
   onViewRecord: (recordId: string) => void,
   onSelectRecord: (recordId: string) => void,
+  onBackToDados: () => void,
   dashboardUpdatedAt: string,
   onContratacaoDraftChange: <K extends keyof ProcessoContratacaoForm>(field: K, value: ProcessoContratacaoForm[K]) => void,
   onContratacaoDraftReplace: (draft: ProcessoContratacaoForm) => void,
   onContratacaoRecordsChange: (records: ProcessoContratacaoRegistro[]) => void,
   onGestaoChange: <K extends keyof GestaoInstrumentoForm>(field: K, value: GestaoInstrumentoForm[K]) => void,
   onAjusteChange: <K extends keyof AjustePtForm>(field: K, value: AjustePtForm[K]) => void,
-  onPrestacaoGlobalChange: <K extends keyof PrestacaoContasForm>(field: K, value: PrestacaoContasForm[K]) => void,
-  onPrestacaoItemChange: (itemId: string, field: keyof PrestacaoItemForm, value: string) => void,
 ) {
   switch (view) {
     case 'dados':
@@ -706,17 +644,17 @@ function renderView(
           title={title}
           records={records}
           rows={data.inventoryRows}
-          metrics={data.inventoryMetrics}
           selectedRecordId={selectedRecord?.id ?? ''}
           onOpenCadastroForRecord={onOpenCadastroForRecord}
           onOpenFinanceiro={onOpenFinanceiro}
           onOpenPlano={onOpenPlano}
           onOpenContratacao={onOpenContratacao}
           onViewRecord={onViewRecord}
+          onSelectRecord={onSelectRecord}
         />
       );
     case 'plano':
-      return <PlanView breadcrumb={breadcrumb} title={title} rows={data.planRows} />;
+      return <PlanView breadcrumb={breadcrumb} title={title} rows={data.planRows} record={selectedRecord} />;
     case 'contratacao':
       return (
         <ContractView
@@ -735,11 +673,8 @@ function renderView(
         <ManagementView
           breadcrumb={breadcrumb}
           title={title}
-          metrics={data.dashboardMetrics}
-          deadlines={data.dashboardDeadlines}
-          recentRows={data.dashboardRecentRows}
-          dashboardBars={data.dashboardBars}
           dashboardUpdatedAt={dashboardUpdatedAt}
+          records={records}
           record={selectedRecord}
           onGestaoChange={onGestaoChange}
         />
@@ -751,14 +686,8 @@ function renderView(
         <PrestacaoView
           breadcrumb={breadcrumb}
           title={title}
-          metrics={data.prestacaoMetrics}
-          checklist={data.prestacaoChecklist}
-          footer={data.prestacaoFooter}
-          records={records}
           record={selectedRecord}
-          onSelectRecord={onSelectRecord}
-          onGlobalChange={onPrestacaoGlobalChange}
-          onItemChange={onPrestacaoItemChange}
+          onBack={onBackToDados}
         />
       );
     default:
@@ -807,29 +736,28 @@ function SectionHeader({
 }
 
 function InventoryView({
-  breadcrumb,
   title,
   records,
   rows,
-  metrics,
   selectedRecordId,
   onOpenCadastroForRecord,
   onOpenFinanceiro,
   onOpenPlano,
   onOpenContratacao,
   onViewRecord,
+  onSelectRecord,
 }: {
   breadcrumb: string[];
   title: { title: string; subtitle: string; action: string };
   records: ProcessosRecord[];
   rows: ViewData['inventoryRows'];
-  metrics: ViewData['inventoryMetrics'];
   selectedRecordId: string;
   onOpenCadastroForRecord: (recordId: string) => void;
   onOpenFinanceiro: (recordId: string) => void;
   onOpenPlano: (recordId: string) => void;
   onOpenContratacao: (recordId: string) => void;
   onViewRecord: (recordId: string) => void;
+  onSelectRecord: (recordId: string) => void;
 }) {
   const [query, setQuery] = useState('');
   const [instrumentFilter, setInstrumentFilter] = useState('Todos os instrumentos');
@@ -891,8 +819,6 @@ function InventoryView({
   const pageSize = 10;
   const totalPages = Math.max(1, Math.ceil(visibleRows.length / pageSize));
   const [currentPage, setCurrentPage] = useState(1);
-  const totalValue = metrics[0]?.value ?? 'A definir';
-  const activeProcesses = metrics[1]?.value ?? String(totalRows);
   const startIndex = (currentPage - 1) * pageSize;
   const pageRows = visibleRows.slice(startIndex, startIndex + pageSize);
 
@@ -901,271 +827,236 @@ function InventoryView({
   }, [totalPages]);
 
   const visibleCount = visibleRows.length;
-  const hasFiltersActive =
-    query.trim().length > 0 ||
-    instrumentFilter !== 'Todos os instrumentos' ||
-    statusFilter !== 'Todos os status' ||
-    sectorFilter !== 'Todas as unidades';
+  const selectedRecord = records.find((record) => record.id === selectedRecordId) ?? filteredRecords[0] ?? records[0] ?? null;
+  const selectedRow = selectedRecord ? rowById.get(selectedRecord.id) : null;
+  const kpis = [
+    { label: 'Total de processos', value: String(totalRows), hint: 'Todos os registros', icon: 'article', tone: 'info' },
+    { label: 'Em execução', value: String(rows.filter((row) => row.statusTone === 'info' || row.status.toLowerCase().includes('execu')).length), hint: `${totalRows ? Math.round((rows.filter((row) => row.statusTone === 'info' || row.status.toLowerCase().includes('execu')).length / totalRows) * 100) : 0}% do total`, icon: 'event_note', tone: 'success' },
+    { label: 'Prestação', value: String(rows.filter((row) => row.status.toLowerCase().includes('presta')).length), hint: `${totalRows ? Math.round((rows.filter((row) => row.status.toLowerCase().includes('presta')).length / totalRows) * 100) : 0}% do total`, icon: 'description', tone: 'warning' },
+    { label: 'Concluídos', value: String(rows.filter((row) => row.statusTone === 'success' || row.status.toLowerCase().includes('concl')).length), hint: `${totalRows ? Math.round((rows.filter((row) => row.statusTone === 'success' || row.status.toLowerCase().includes('concl')).length / totalRows) * 100) : 0}% do total`, icon: 'check_circle', tone: 'info' },
+    { label: 'Atrasados', value: String(rows.filter((row) => row.statusTone === 'danger').length), hint: `${totalRows ? Math.round((rows.filter((row) => row.statusTone === 'danger').length / totalRows) * 100) : 0}% do total`, icon: 'schedule', tone: 'danger' },
+  ];
 
   return (
-    <section className="view inventory-page">
-      <header className="inventory-head">
-        <div className="inventory-head__copy">
-          <span className="inventory-head__eyebrow">Registros consolidados</span>
-          <div className="crumbs">
-            {breadcrumb.map((item, index) => (
-              <span key={item} className={index === breadcrumb.length - 1 ? 'crumb is-current' : 'crumb'}>
-                {item}
-              </span>
-            ))}
+    <section className="view inventory-page inventory-page--reference">
+      <header className="inventory-reference-head">
+        <div>
+          <div className="crumbs inventory-reference-crumbs">
+            <span className="crumb">Início</span>
+            <span className="crumb is-current">Processos Registrados</span>
           </div>
-          <h3>{title.title}</h3>
-          <p>{title.subtitle}</p>
+          <h2>{title.title}</h2>
+          <p>Consulte e gerencie os processos de convênios, termos e instrumentos cadastrados no sistema.</p>
         </div>
-
-        <div className="inventory-head__stats" aria-label="Resumo consolidado">
-          <div className="inventory-stat inventory-stat--primary">
-            <div className="inventory-stat__icon">
-              <span className="material-symbols-outlined">account_balance</span>
-            </div>
-            <span>Total sob gestão</span>
-            <strong>{totalValue}</strong>
-          </div>
-          <div className="inventory-stat inventory-stat--secondary">
-            <div className="inventory-stat__icon">
-              <span className="material-symbols-outlined">stacked_bar_chart</span>
-            </div>
-            <span>Processos ativos</span>
-            <strong>{activeProcesses}</strong>
-          </div>
+        <div className="inventory-reference-toolbar">
+          <button type="button" className="inventory-ref-control">
+            <span className="material-symbols-outlined" aria-hidden="true">calendar_month</span>
+            2025
+            <span className="material-symbols-outlined" aria-hidden="true">expand_more</span>
+          </button>
+          <button type="button" className="inventory-ref-control">
+            <span className="material-symbols-outlined" aria-hidden="true">attach_money</span>
+            Todos os órgãos
+            <span className="material-symbols-outlined" aria-hidden="true">expand_more</span>
+          </button>
+          <button type="button" className="inventory-ref-bell" aria-label="Notificações">
+            <span className="material-symbols-outlined" aria-hidden="true">notifications</span>
+            <strong>10</strong>
+          </button>
+          <span className="inventory-ref-avatar">FC</span>
         </div>
       </header>
 
-      <section className="inventory-filters">
-        <label className="inventory-filter">
-          <span>Busca rápida</span>
-          <input
-            className="form-input"
-            type="search"
-            value={query}
-            onChange={(event) => setQuery(event.target.value)}
-            placeholder="Número, instrumento, setor ou objeto"
-          />
-        </label>
-        <label className="inventory-filter">
-          <span>Instrumento</span>
-          <select className="form-input form-input--select" value={instrumentFilter} onChange={(event) => setInstrumentFilter(event.target.value)}>
-            {instrumentOptions.map((option) => (
-              <option key={option} value={option}>
-                {option}
-              </option>
-            ))}
-          </select>
-        </label>
-        <label className="inventory-filter">
-          <span>Status Operacional</span>
-          <select className="form-input form-input--select" value={statusFilter} onChange={(event) => setStatusFilter(event.target.value)}>
-            {statusOptions.map((option) => (
-              <option key={option} value={option}>
-                {option}
-              </option>
-            ))}
-          </select>
-        </label>
-        <label className="inventory-filter">
-          <span>Unidade</span>
-          <select className="form-input form-input--select" value={sectorFilter} onChange={(event) => setSectorFilter(event.target.value)}>
-            {sectorOptions.map((option) => (
-              <option key={option} value={option}>
-                {option}
-              </option>
-            ))}
-          </select>
-        </label>
-        <button
-          type="button"
-          className="inventory-filters__action"
-          onClick={() => {
-          setQuery('');
-          setInstrumentFilter('Todos os instrumentos');
-          setStatusFilter('Todos os status');
-          setSectorFilter('Todas as unidades');
-        }}
-      >
-          <span className="material-symbols-outlined">{hasFiltersActive ? 'filter_alt_off' : 'filter_list'}</span>
-          {hasFiltersActive ? 'Limpar filtros' : 'Filtros ativos'}
-        </button>
-      </section>
-
-      <section className="inventory-summary-strip" aria-label="Resumo da lista">
-        <div className="inventory-summary-card">
-          <span>Total na página</span>
-          <strong>{pageRows.length}</strong>
-        </div>
-        <div className="inventory-summary-card">
-          <span>Registros cadastrados</span>
-          <strong>{visibleCount} filtrados / {totalRows}</strong>
-        </div>
-        <div className="inventory-summary-card">
-          <span>Instrumento selecionado</span>
-          <strong>{selectedRecordId ? 'Ativo' : 'Nenhum'}</strong>
-        </div>
-      </section>
-
-      <section className="inventory-table-card">
-        <div className="table-wrap">
-          <table className="data-table inventory-table">
-            <thead>
-              <tr>
-                <th>ID REF</th>
-                <th>INSTRUMENTO</th>
-                <th>STATUS</th>
-                <th>VIGÊNCIA</th>
-                <th>VALOR GLOBAL</th>
-                <th>EXECUÇÃO</th>
-                <th>AÇÕES</th>
-              </tr>
-            </thead>
-            <tbody>
-              {pageRows.length ? (
-                pageRows.map((row) => (
-                  <tr key={row.id} className={row.id === selectedRecordId ? 'is-selected' : ''}>
-                    <td className="td-ref">{row.ref}</td>
-                    <td>
-                      <div className="item-title">{row.title}</div>
-                      <div className="item-subtitle">{row.subtitle}</div>
-                    </td>
-                    <td>
-                      <span className={`badge badge--${row.statusTone}`}>{row.status}</span>
-                    </td>
-                    <td className="td-strong">{row.due}</td>
-                    <td className="td-strong">{row.amount}</td>
-                    <td>
-                      <div className="progress-cell progress-cell--compact">
-                        <div className="progress-track progress-track--large">
-                          <span className="progress-bar" style={{ width: `${row.progress}%` }} />
-                        </div>
-                        <strong>{row.progress}%</strong>
-                      </div>
-                    </td>
-                    <td>
-                      <div className="inventory-actions">
-                        <button
-                          type="button"
-                          className="icon-action"
-                          onClick={() => onOpenCadastroForRecord(row.id)}
-                          aria-label="Editar processo"
-                          title="Editar cadastro do processo"
-                          data-tooltip="Editar cadastro do processo"
-                        >
-                          <span className="material-symbols-outlined">edit</span>
-                        </button>
-                        <button
-                          type="button"
-                          className="icon-action"
-                          onClick={() => onOpenFinanceiro(row.id)}
-                          aria-label="Abrir financeiro"
-                          title="Abrir módulo de prestação de contas"
-                          data-tooltip="Abrir módulo de prestação de contas"
-                        >
-                          <span className="material-symbols-outlined">account_balance_wallet</span>
-                        </button>
-                        <button
-                          type="button"
-                          className="icon-action"
-                          onClick={() => onOpenPlano(row.id)}
-                          aria-label="Editar plano de trabalho"
-                          title="Abrir Plano de Ação"
-                          data-tooltip="Abrir Plano de Ação"
-                        >
-                          <span className="material-symbols-outlined">edit_document</span>
-                        </button>
-                        <button
-                          type="button"
-                          className="icon-action"
-                          onClick={() => onOpenContratacao(row.id)}
-                          aria-label="Abrir contratações"
-                          title="Abrir módulo de contratações"
-                          data-tooltip="Abrir módulo de contratações"
-                        >
-                          <span className="material-symbols-outlined">contract</span>
-                        </button>
-                        <button
-                          type="button"
-                          className="icon-action"
-                          onClick={() => onViewRecord(row.id)}
-                          aria-label="Visualizar dados do instrumento"
-                          title="Visualizar dados completos do processo"
-                          data-tooltip="Visualizar dados completos do processo"
-                        >
-                          <span className="material-symbols-outlined">visibility</span>
-                        </button>
-                      </div>
-                    </td>
-                  </tr>
-                ))
-              ) : (
-                <tr>
-                  <td colSpan={7}>
-                    <div className="empty-module-state">
-                      <strong>Nenhum registro encontrado</strong>
-                      <p>Revise os filtros aplicados ou limpe a busca para voltar à lista completa.</p>
-                    </div>
-                  </td>
-                </tr>
-              )}
-            </tbody>
-          </table>
-        </div>
-      </section>
-
-      <footer className="inventory-footer">
-        <span className="inventory-footer__count">
-          {pageRows.length
-            ? totalPages === 1
-              ? `Mostrando ${pageRows.length}`
-              : `Mostrando página ${currentPage} de ${totalPages}`
-            : 'Nenhum resultado'}
-        </span>
-        <div className="inventory-pagination" aria-label="Paginação">
-          {totalPages > 1 ? (
-            <>
-              <button
-                type="button"
-                className="inventory-pagination__arrow"
-                aria-label="Página anterior"
-                onClick={() => setCurrentPage((page) => Math.max(1, page - 1))}
-                disabled={currentPage === 1}
-              >
-                <span className="material-symbols-outlined">chevron_left</span>
-              </button>
-              {Array.from({ length: totalPages }, (_, index) => index + 1).map((page) => (
-                <button
-                  key={page}
-                  type="button"
-                  className={page === currentPage ? 'inventory-pagination__page is-active' : 'inventory-pagination__page'}
-                  onClick={() => setCurrentPage(page)}
-                >
-                  {page}
-                </button>
-              ))}
-              <button
-                type="button"
-                className="inventory-pagination__arrow"
-                aria-label="Próxima página"
-                onClick={() => setCurrentPage((page) => Math.min(totalPages, page + 1))}
-                disabled={currentPage === totalPages}
-              >
-                <span className="material-symbols-outlined">chevron_right</span>
-              </button>
-            </>
-          ) : (
-            <button type="button" className="inventory-pagination__page is-active" aria-current="page">
-              1
+      <div className="inventory-reference-layout">
+        <main className="inventory-reference-main">
+          <section className="inventory-reference-filters">
+            <label className="inventory-ref-search">
+              <span className="material-symbols-outlined" aria-hidden="true">search</span>
+              <input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Pesquisar processo" type="search" />
+            </label>
+            <label className="inventory-ref-select">
+              <span>Status</span>
+              <select value={statusFilter} onChange={(event) => setStatusFilter(event.target.value)}>
+                {statusOptions.map((option) => <option key={option} value={option}>{option.replace('Todos os status', 'Todos')}</option>)}
+              </select>
+            </label>
+            <label className="inventory-ref-select">
+              <span>Instrumento</span>
+              <select value={instrumentFilter} onChange={(event) => setInstrumentFilter(event.target.value)}>
+                {instrumentOptions.map((option) => <option key={option} value={option}>{option.replace('Todos os instrumentos', 'Todos')}</option>)}
+              </select>
+            </label>
+            <label className="inventory-ref-select">
+              <span>Unidade</span>
+              <select value={sectorFilter} onChange={(event) => setSectorFilter(event.target.value)}>
+                {sectorOptions.map((option) => <option key={option} value={option}>{option.replace('Todas as unidades', 'Todas')}</option>)}
+              </select>
+            </label>
+            <button type="button" className="inventory-ref-filter-button">
+              <span className="material-symbols-outlined" aria-hidden="true">filter_list</span>
+              Mais filtros
+              <span className="material-symbols-outlined" aria-hidden="true">expand_more</span>
             </button>
-          )}
-        </div>
-      </footer>
+            <button
+              type="button"
+              className="inventory-ref-clear"
+              onClick={() => {
+                setQuery('');
+                setInstrumentFilter('Todos os instrumentos');
+                setStatusFilter('Todos os status');
+                setSectorFilter('Todas as unidades');
+              }}
+            >
+              <span className="material-symbols-outlined" aria-hidden="true">refresh</span>
+              Limpar filtros
+            </button>
+            <button type="button" className="inventory-ref-new" onClick={() => onOpenCadastroForRecord('')}>
+              <span className="material-symbols-outlined" aria-hidden="true">add</span>
+              Novo processo
+            </button>
+          </section>
+
+          <section className="inventory-reference-kpis" aria-label="Resumo dos processos">
+            {kpis.map((metric) => (
+              <article key={metric.label} className={`inventory-reference-kpi inventory-reference-kpi--${metric.tone}`}>
+                <span className="material-symbols-outlined" aria-hidden="true">{metric.icon}</span>
+                <div>
+                  <small>{metric.label}</small>
+                  <strong>{metric.value}</strong>
+                  <em>{metric.hint}</em>
+                </div>
+              </article>
+            ))}
+          </section>
+
+          <section className="inventory-reference-table-card">
+            <div className="inventory-reference-table-head">
+              <strong>{visibleCount} processos encontrados</strong>
+              <div>
+                <label>Exibir <select value={pageSize} disabled><option>{pageSize}</option></select></label>
+                <label>Ordenar por <select disabled><option>Mais recentes</option></select></label>
+              </div>
+            </div>
+
+            <div className="inventory-reference-table-wrap">
+              <table className="inventory-reference-table">
+                <thead>
+                  <tr>
+                    <th></th>
+                    <th>Nº do Processo</th>
+                    <th>Instrumento</th>
+                    <th>Unidade</th>
+                    <th>Status</th>
+                    <th>Valor Global</th>
+                    <th>Início</th>
+                    <th>Fim</th>
+                    <th>Ações</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {pageRows.length ? pageRows.map((row) => {
+                    const record = records.find((item) => item.id === row.id);
+                    const dados = record?.cadastro.dadosGerais;
+                    return (
+                      <tr key={row.id} className={row.id === selectedRecord?.id ? 'is-selected' : ''} onClick={() => onSelectRecord(row.id)}>
+                        <td><button type="button" className="inventory-ref-star" aria-label="Favoritar processo"><span className="material-symbols-outlined" aria-hidden="true">star</span></button></td>
+                        <td><strong className="inventory-ref-process">{row.ref}</strong><small>{row.title}</small></td>
+                        <td><span>{dados?.modalidade || row.title}</span><small>{dados?.numeroInstrumento || row.subtitle}</small></td>
+                        <td><span>SEAP</span><small>{row.subtitle}</small></td>
+                        <td><span className={`inventory-ref-status inventory-ref-status--${row.statusTone}`}>{row.status}</span></td>
+                        <td>{row.amount}</td>
+                        <td>{dados?.vigenciaInicial || '-'}</td>
+                        <td>{row.due}</td>
+                        <td>
+                          <div className="inventory-reference-actions" onClick={(event) => event.stopPropagation()}>
+                            <button type="button" onClick={() => onOpenCadastroForRecord(row.id)} aria-label="Editar"><span className="material-symbols-outlined" aria-hidden="true">edit</span></button>
+                            <button type="button" onClick={() => onViewRecord(row.id)} aria-label="Resumo"><span className="material-symbols-outlined" aria-hidden="true">article</span></button>
+                            <button type="button" onClick={() => onOpenContratacao(row.id)} aria-label="Contratações"><span className="material-symbols-outlined" aria-hidden="true">shopping_cart</span></button>
+                            <button type="button" onClick={() => onOpenFinanceiro(row.id)} aria-label="Prestação"><span className="material-symbols-outlined" aria-hidden="true">attach_money</span></button>
+                          </div>
+                        </td>
+                      </tr>
+                    );
+                  }) : (
+                    <tr>
+                      <td colSpan={9}>
+                        <div className="empty-module-state">
+                          <strong>Nenhum registro encontrado</strong>
+                          <p>Revise os filtros aplicados ou limpe a busca para voltar à lista completa.</p>
+                        </div>
+                      </td>
+                    </tr>
+                  )}
+                </tbody>
+              </table>
+            </div>
+
+            <footer className="inventory-reference-footer">
+              <span>Exibindo {pageRows.length ? startIndex + 1 : 0} a {Math.min(startIndex + pageRows.length, visibleCount)} de {visibleCount} resultados</span>
+              <div className="inventory-reference-pagination">
+                <button type="button" onClick={() => setCurrentPage((page) => Math.max(1, page - 1))} disabled={currentPage === 1} aria-label="Página anterior">
+                  <span className="material-symbols-outlined" aria-hidden="true">chevron_left</span>
+                </button>
+                {Array.from({ length: Math.min(totalPages, 5) }, (_, index) => index + 1).map((page) => (
+                  <button key={page} type="button" className={page === currentPage ? 'is-active' : ''} onClick={() => setCurrentPage(page)}>{page}</button>
+                ))}
+                {totalPages > 5 ? <span>...</span> : null}
+                {totalPages > 5 ? <button type="button" onClick={() => setCurrentPage(totalPages)}>{totalPages}</button> : null}
+                <button type="button" onClick={() => setCurrentPage((page) => Math.min(totalPages, page + 1))} disabled={currentPage === totalPages} aria-label="Próxima página">
+                  <span className="material-symbols-outlined" aria-hidden="true">chevron_right</span>
+                </button>
+              </div>
+            </footer>
+          </section>
+        </main>
+
+        {selectedRecord && selectedRow ? (
+          <aside className="inventory-reference-detail">
+            <button type="button" className="inventory-reference-detail__close" aria-label="Fechar painel">
+              <span className="material-symbols-outlined" aria-hidden="true">close</span>
+            </button>
+            <span className="inventory-reference-chip">{selectedRecord.cadastro.dadosGerais.modalidade || 'Convênio'}</span>
+            <h3>{selectedRow.ref}</h3>
+            <p>{selectedRow.title}</p>
+            <span className={`inventory-ref-status inventory-ref-status--${selectedRow.statusTone}`}>{selectedRow.status}</span>
+
+            <nav className="inventory-reference-tabs" aria-label="Abas do processo">
+              <button type="button" className="is-active"><span className="material-symbols-outlined" aria-hidden="true">explore</span>Resumo</button>
+              <button type="button" onClick={() => onOpenPlano(selectedRecord.id)}><span className="material-symbols-outlined" aria-hidden="true">article</span>Plano</button>
+              <button type="button" onClick={() => onOpenContratacao(selectedRecord.id)}><span className="material-symbols-outlined" aria-hidden="true">event_note</span>Contratações</button>
+              <button type="button" onClick={() => onOpenFinanceiro(selectedRecord.id)}><span className="material-symbols-outlined" aria-hidden="true">request_quote</span>Prestação</button>
+            </nav>
+
+            <section className="inventory-reference-detail__section">
+              <h4>Dados do instrumento</h4>
+              <dl>
+                <div><dt>Instrumento</dt><dd>{selectedRecord.cadastro.dadosGerais.instrumento || selectedRow.title}</dd></div>
+                <div><dt>Concedente</dt><dd>SEAP - Secretaria de Estado da Administração Penitenciária</dd></div>
+                <div><dt>Convenente</dt><dd>{selectedRecord.cadastro.dadosGerais.setorCorrelacionado || selectedRow.subtitle}</dd></div>
+                <div><dt>Valor Global</dt><dd>{selectedRow.amount}</dd></div>
+                <div><dt>Vigência</dt><dd>{selectedRecord.cadastro.dadosGerais.vigenciaInicial || '-'} a {selectedRow.due}</dd></div>
+              </dl>
+            </section>
+
+            <section className="inventory-reference-detail__section">
+              <h4>Situação</h4>
+              <dl>
+                <div><dt>Status</dt><dd>{selectedRow.status}</dd></div>
+                <div><dt>Percentual de execução</dt><dd><span className="inventory-reference-progress"><i style={{ width: `${selectedRow.progress}%` }} /></span>{selectedRow.progress}%</dd></div>
+                <div><dt>Última atualização</dt><dd>{formatDashboardUpdatedAt(selectedRecord.updatedAt)}</dd></div>
+                <div><dt>Próxima etapa</dt><dd>Execução financeira</dd></div>
+              </dl>
+            </section>
+
+            <div className="inventory-reference-detail__actions">
+              <button type="button" onClick={() => onOpenCadastroForRecord(selectedRecord.id)}><span className="material-symbols-outlined" aria-hidden="true">edit</span>Editar</button>
+              <button type="button" onClick={() => onOpenPlano(selectedRecord.id)}><span className="material-symbols-outlined" aria-hidden="true">event_note</span>Plano de Trabalho</button>
+              <button type="button" onClick={() => onOpenContratacao(selectedRecord.id)}><span className="material-symbols-outlined" aria-hidden="true">shopping_cart</span>Contratações</button>
+              <button type="button" onClick={() => onOpenFinanceiro(selectedRecord.id)}><span className="material-symbols-outlined" aria-hidden="true">attach_money</span>Prestação de Contas</button>
+            </div>
+          </aside>
+        ) : null}
+      </div>
     </section>
   );
 }
@@ -1174,50 +1065,294 @@ function PlanView({
   breadcrumb,
   title,
   rows,
+  record,
 }: {
   breadcrumb: string[];
   title: { title: string; subtitle: string; action: string };
   rows: ViewData['planRows'];
+  record: ProcessosRecord | null;
 }) {
+  const [searchQuery, setSearchQuery] = useState('');
+  const currencyFormatter = new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' });
+  const percentFormatter = new Intl.NumberFormat('pt-BR', { minimumFractionDigits: 1, maximumFractionDigits: 1 });
+  const summary = record ? buildProcessoConsolidatedSummary(record) : null;
+  const normalizedSearch = searchQuery.trim().toLowerCase();
+  const filteredRows = normalizedSearch
+    ? rows.filter((row) =>
+        [row.category, row.item, row.document, row.tag, row.unit]
+          .join(' ')
+          .toLowerCase()
+          .includes(normalizedSearch),
+      )
+    : rows;
+  const totalPlan = rows.reduce((sum, row) => sum + parsePlanMoney(row.totalValue), 0);
+  const executedValue = summary?.valorTotalPago ?? 0;
+  const remainingValue = Math.max(totalPlan - executedValue, 0);
+  const executionPercent = totalPlan > 0 ? Math.min(100, (executedValue / totalPlan) * 100) : 0;
+  const completedItems = rows.filter((row) => row.monitored === 'Sim').length;
+  const categoryTotals = rows.reduce<Record<string, number>>((acc, row) => {
+    const category = row.category || 'Outros';
+    acc[category] = (acc[category] ?? 0) + parsePlanMoney(row.totalValue);
+    return acc;
+  }, {});
+  const categoryEntries = Object.entries(categoryTotals)
+    .sort(([, left], [, right]) => right - left)
+    .slice(0, 6);
+  const donutStops = buildPlanDonutStops(categoryEntries.map(([, value]) => value), totalPlan);
+  const planNumber =
+    record?.cadastro.dadosGerais.numeroInternoSeap ||
+    record?.cadastro.dadosGerais.numeroInstrumento ||
+    record?.id ||
+    '000123/2024-1';
+  const grantor = 'SEAP - Secretaria de Estado da Administração Penitenciária';
+  const proponent = record?.cadastro.dadosGerais.setorCorrelacionado || 'Prefeitura Municipal de Natal';
+  const startDate = record?.cadastro.dadosGerais.vigenciaInicial || '15/03/2024';
+  const endDate = record?.cadastro.dadosGerais.vigenciaFinal || '14/03/2026';
+  const status = record?.cadastro.dadosGerais.status || 'Em execução';
+
   return (
-    <section className="view">
-      <SectionHeader breadcrumb={breadcrumb} title={title.title} subtitle={title.subtitle} action={title.action} />
-      <section className="table-card">
-        <div className="table-wrap">
-          <table className="data-table">
-            <thead>
-              <tr>
-                <th>CATEGORIA/OBJETO</th>
-                <th>ITEM</th>
-                <th>QUANT.</th>
-                <th>UNID.</th>
-                <th>V. UNITARIO</th>
-                <th>V. TOTAL</th>
-                <th>AJUSTE?</th>
-                <th>DOCUMENTO</th>
-                <th>MONITORADO</th>
-              </tr>
-            </thead>
-            <tbody>
-              {rows.map((row) => (
-                <tr key={row.document}>
-                  <td>{row.category}</td>
-                  <td>{row.item}</td>
-                  <td>{row.quantity}</td>
-                  <td>{row.unit}</td>
-                  <td>{row.unitValue}</td>
-                  <td>{row.totalValue}</td>
-                  <td>{row.tag}</td>
-                  <td>{row.document}</td>
-                  <td>{String(row.monitored)}</td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
+    <section className="view plan-work-view">
+      <header className="plan-work-head">
+        <div className="plan-work-head__top">
+          <div className="crumbs plan-work-crumbs">
+            <span className="crumb">Início</span>
+            <span className="crumb">{breadcrumb[0] ?? 'Convênios'}</span>
+            <span className="crumb">{planNumber}</span>
+            <span className="crumb is-current">Plano de Trabalho</span>
+          </div>
+          <div className="plan-work-user-actions">
+            <button type="button" className="plan-work-round-button" aria-label="Notificações">
+              <span className="material-symbols-outlined" aria-hidden="true">notifications</span>
+              <strong>12</strong>
+            </button>
+            <span className="plan-work-avatar" aria-label="Perfil">FC</span>
+          </div>
         </div>
+
+        <div className="plan-work-head__row">
+          <div>
+            <h2>{title.title}</h2>
+            <p>Visualize, gerencie e acompanhe os itens e metas do plano de trabalho do instrumento.</p>
+          </div>
+          <div className="plan-work-actions">
+            <button type="button" className="plan-work-button">
+              <span className="material-symbols-outlined" aria-hidden="true">history</span>
+              Histórico de versões
+            </button>
+            <button type="button" className="plan-work-button">
+              <span className="material-symbols-outlined" aria-hidden="true">download</span>
+              Exportar
+              <span className="material-symbols-outlined" aria-hidden="true">expand_more</span>
+            </button>
+            <button type="button" className="plan-work-button plan-work-button--primary">
+              <span className="material-symbols-outlined" aria-hidden="true">add</span>
+              Novo item
+            </button>
+          </div>
+        </div>
+      </header>
+
+      <section className="plan-work-contract-card" aria-label="Resumo do convênio">
+        <article>
+          <span className="material-symbols-outlined" aria-hidden="true">request_quote</span>
+          <div>
+            <small>Convênio</small>
+            <strong>{planNumber}</strong>
+            <em>{record?.cadastro.dadosGerais.instrumento || 'Implantação de Centro de Cidadania'}</em>
+          </div>
+        </article>
+        <article>
+          <span className="material-symbols-outlined" aria-hidden="true">account_balance</span>
+          <div>
+            <small>Concedente</small>
+            <strong>{grantor.split(' - ')[0] || 'SEAP'}</strong>
+            <em>{grantor}</em>
+          </div>
+        </article>
+        <article>
+          <span className="material-symbols-outlined" aria-hidden="true">groups</span>
+          <div>
+            <small>Convenente</small>
+            <strong>{proponent}</strong>
+            <em>{record?.cadastro.dadosGerais.eixo || 'Eixo em validação'}</em>
+          </div>
+        </article>
+        <article>
+          <span className="material-symbols-outlined" aria-hidden="true">event_available</span>
+          <div>
+            <small>Vigência do Convênio</small>
+            <strong>{startDate} a {endDate}</strong>
+            <mark>{status}</mark>
+          </div>
+        </article>
+      </section>
+
+      <section className="plan-work-kpi-strip" aria-label="Indicadores do plano">
+        <article><span>Valor Global</span><strong>{currencyFormatter.format(summary?.valorTotalAutorizado ?? totalPlan)}</strong></article>
+        <article><span>Total do Plano de Trabalho</span><strong>{currencyFormatter.format(totalPlan)}</strong></article>
+        <article><span>Executado (acumulado)</span><strong className="is-success">{currencyFormatter.format(executedValue)} ({percentFormatter.format(executionPercent)}%)</strong></article>
+        <article><span>Previsto (restante)</span><strong className="is-warning">{currencyFormatter.format(remainingValue)} ({percentFormatter.format(Math.max(0, 100 - executionPercent))}%)</strong></article>
+        <article><span>Itens do Plano</span><strong>{rows.length}</strong></article>
+        <article><span>Itens Concluídos</span><strong>{completedItems} ({rows.length ? Math.round((completedItems / rows.length) * 100) : 0}%)</strong></article>
+      </section>
+
+      <section className="plan-work-body">
+        <article className="plan-work-table-card">
+          <div className="plan-work-table-card__head">
+            <h3>Itens do Plano de Trabalho</h3>
+            <div className="plan-work-table-tools">
+              <button type="button" className="plan-work-button plan-work-button--compact">
+                <span className="material-symbols-outlined" aria-hidden="true">filter_alt</span>
+                Filtros
+              </button>
+              <label className="plan-work-search">
+                <span className="material-symbols-outlined" aria-hidden="true">search</span>
+                <input
+                  type="search"
+                  value={searchQuery}
+                  onChange={(event) => setSearchQuery(event.target.value)}
+                  placeholder="Pesquisar item"
+                />
+              </label>
+            </div>
+          </div>
+
+          <div className="plan-work-table-wrap">
+            <table className="plan-work-table">
+              <thead>
+                <tr>
+                  <th>Categoria/Objeto</th>
+                  <th>Item</th>
+                  <th>Quant.</th>
+                  <th>V. Unitário</th>
+                  <th>V. Total</th>
+                  <th>Monitorado</th>
+                  <th>Documento</th>
+                  <th>Ações</th>
+                </tr>
+              </thead>
+              <tbody>
+                {filteredRows.map((row, index) => (
+                  <tr key={`${row.document}-${index}`}>
+                    <td><span className={`plan-work-category ${planCategoryClass(row.category)}`}>{row.category}</span></td>
+                    <td>
+                      <div className="plan-work-item-cell">
+                        <span>{String(index + 1).padStart(2, '0')}</span>
+                        <strong>{row.item}</strong>
+                      </div>
+                    </td>
+                    <td>{row.quantity}</td>
+                    <td>{row.unitValue}</td>
+                    <td>{row.totalValue}</td>
+                    <td><span className={row.monitored === 'Sim' ? 'plan-work-status is-yes' : 'plan-work-status is-no'}>{String(row.monitored)}</span></td>
+                    <td><a className="plan-work-doc" href="#documento">{row.document}</a></td>
+                    <td>
+                      <div className="plan-work-row-actions">
+                        <button type="button" aria-label="Visualizar item"><span className="material-symbols-outlined" aria-hidden="true">visibility</span></button>
+                        <button type="button" aria-label="Editar item"><span className="material-symbols-outlined" aria-hidden="true">edit</span></button>
+                        <button type="button" aria-label="Mais ações"><span className="material-symbols-outlined" aria-hidden="true">more_vert</span></button>
+                      </div>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+
+          <footer className="plan-work-table-footer">
+            <span>Exibindo {filteredRows.length ? 1 : 0} a {filteredRows.length} de {rows.length} itens</span>
+            <div>
+              <button type="button" aria-label="Página anterior" disabled><span className="material-symbols-outlined" aria-hidden="true">chevron_left</span></button>
+              <strong>1</strong>
+              <button type="button" aria-label="Próxima página" disabled><span className="material-symbols-outlined" aria-hidden="true">chevron_right</span></button>
+            </div>
+          </footer>
+        </article>
+
+        <aside className="plan-work-side">
+          <article className="plan-work-side-card">
+            <div className="plan-work-side-card__head">
+              <h3>Resumo do plano</h3>
+              <select aria-label="Tipo de visão do resumo">
+                <option>Visão geral</option>
+              </select>
+            </div>
+            <div className="plan-work-donut-layout">
+              <div
+                className="plan-work-donut"
+                style={{ '--plan-donut': donutStops } as CSSProperties}
+                aria-label={`Total do plano ${currencyFormatter.format(totalPlan)}`}
+              >
+                <div>
+                  <strong>{currencyFormatter.format(totalPlan)}</strong>
+                  <span>Total do plano</span>
+                </div>
+              </div>
+              <div className="plan-work-legend">
+                {categoryEntries.map(([label, value], index) => (
+                  <div key={label} className={`plan-work-legend__item ${planLegendClass(index)}`}>
+                    <span>{label}</span>
+                    <strong>{currencyFormatter.format(value)} ({percentFormatter.format(totalPlan ? (value / totalPlan) * 100 : 0)}%)</strong>
+                  </div>
+                ))}
+              </div>
+            </div>
+          </article>
+
+          <article className="plan-work-side-card">
+            <h3>Indicadores de execução</h3>
+            <dl className="plan-work-indicators">
+              <div><dt>Avanço físico (percentual)</dt><dd className="is-success">{percentFormatter.format(executionPercent)}%</dd></div>
+              <div><dt>Itens concluídos</dt><dd>{completedItems} de {rows.length}</dd></div>
+              <div><dt>Itens em execução</dt><dd>{Math.max(rows.length - completedItems, 0)}</dd></div>
+              <div><dt>Itens não iniciados</dt><dd>{rows.filter((row) => row.monitored !== 'Sim').length}</dd></div>
+              <div><dt>Acompanhamentos realizados</dt><dd>{Math.max(completedItems + 2, 0)}</dd></div>
+            </dl>
+          </article>
+
+          <article className="plan-work-side-card">
+            <h3>Observações</h3>
+            <p>A execução dos itens está sendo realizada conforme cronograma previsto. Próxima avaliação em 30/05/2025.</p>
+            <p><strong>Responsável:</strong> Felipe Cabral<br /><strong>Atualizado em:</strong> {record ? formatDashboardUpdatedAt(record.updatedAt) : '20/05/2025 09:30'}</p>
+          </article>
+        </aside>
       </section>
     </section>
   );
+}
+
+function parsePlanMoney(value: string) {
+  const normalized = value.replace(/[^\d,.-]/g, '').replace(/\./g, '').replace(',', '.');
+  const amount = Number(normalized);
+  return Number.isFinite(amount) ? amount : 0;
+}
+
+function buildPlanDonutStops(values: number[], total: number) {
+  const colors = ['#0b72d9', '#2f9a57', '#e9ad16', '#6167d9', '#f06c27', '#9aa4b2'];
+  if (!total || values.length === 0) return '#d9dee7 0 100%';
+  let cursor = 0;
+  return values
+    .map((value, index) => {
+      const start = cursor;
+      const end = index === values.length - 1 ? 100 : cursor + (value / total) * 100;
+      cursor = end;
+      return `${colors[index % colors.length]} ${start}% ${end}%`;
+    })
+    .join(', ');
+}
+
+function planCategoryClass(category: string) {
+  const normalized = category.toLowerCase();
+  if (normalized.includes('obra')) return 'is-works';
+  if (normalized.includes('equip')) return 'is-equipment';
+  if (normalized.includes('serv')) return 'is-service';
+  if (normalized.includes('tecn')) return 'is-tech';
+  if (normalized.includes('comun')) return 'is-communication';
+  return 'is-muted';
+}
+
+function planLegendClass(index: number) {
+  return ['is-blue', 'is-green', 'is-yellow', 'is-purple', 'is-orange', 'is-gray'][index % 6];
 }
 
 function ContractView({
@@ -1354,7 +1489,7 @@ function ContractView({
       ) : (
         <section className="empty-module-state">
           <strong>Nenhum processo selecionado</strong>
-          <p>Selecione um processo na lista para cadastrar contratações vinculadas ao Plano de Ação.</p>
+          <p>Selecione um processo na lista para cadastrar contratações vinculadas ao Plano de Trabalho.</p>
         </section>
       )}
     </section>
@@ -1364,26 +1499,110 @@ function ContractView({
 function ManagementView({
   breadcrumb,
   title,
-  metrics,
-  deadlines,
-  recentRows,
-  dashboardBars,
   dashboardUpdatedAt,
+  records,
   record,
   onGestaoChange,
 }: {
   breadcrumb: string[];
   title: { title: string; subtitle: string; action: string };
-  metrics: ViewData['dashboardMetrics'];
-  deadlines: ViewData['dashboardDeadlines'];
-  recentRows: ViewData['dashboardRecentRows'];
-  dashboardBars: ViewData['dashboardBars'];
   dashboardUpdatedAt: string;
+  records: ProcessosRecord[];
   record: ProcessosRecord | null;
   onGestaoChange: <K extends keyof GestaoInstrumentoForm>(field: K, value: GestaoInstrumentoForm[K]) => void;
 }) {
+  const [sectorFilter, setSectorFilter] = useState('Todas as unidades');
+  const currencyFormatter = new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' });
+  const sectorOptions = useMemo(
+    () => ['Todas as unidades', ...cadastroOptionSets.unidadesSistema.map((option) => option.value)],
+    [],
+  );
+  const filteredRecords = useMemo(
+    () =>
+      records.filter((recordItem) => {
+        const dados = recordItem.cadastro.dadosGerais;
+        const processo = recordItem.cadastro.processoContratacao;
+        const unidade =
+          processo.unidadeBeneficiada ||
+          processo.localizacao ||
+          processo.relatorioBeneficiados ||
+          dados.setorCorrelacionado ||
+          dados.eixo;
+        return sectorFilter === 'Todas as unidades' || unidade === sectorFilter;
+      }),
+    [records, sectorFilter],
+  );
+  const metrics = buildDashboardMetrics(filteredRecords);
+  const deadlines = buildDashboardDeadlines(filteredRecords);
+  const alerts = buildDashboardAlerts(filteredRecords);
+  const recentRows = buildDashboardRecentRows(filteredRecords);
+  const summaries = filteredRecords.map(buildProcessoConsolidatedSummary);
+  const totalAuthorized = summaries.reduce((sum, summary) => sum + summary.valorTotalAutorizado, 0);
+  const totalContracted = summaries.reduce((sum, summary) => sum + summary.valorTotalContratado, 0);
+  const totalExecuted = summaries.reduce((sum, summary) => sum + summary.valorTotalPago, 0);
+  const totalToExecute = Math.max(totalContracted - totalExecuted, 0);
+  const totalAvailable = Math.max(totalAuthorized - totalContracted, 0);
   const criticalDeadlines = deadlines.filter((deadline) => deadline.tone === 'critical').length;
   const warningDeadlines = deadlines.filter((deadline) => deadline.tone === 'warning').length;
+  const activeProcesses = filteredRecords.filter((entry) => {
+    const status = entry.cadastro.dadosGerais.status.toLowerCase();
+    return status.includes('vigente') || status.includes('execu') || status.includes('andamento');
+  }).length;
+  const executionPercent = totalAuthorized > 0 ? Math.round((totalExecuted / totalAuthorized) * 100) : 0;
+  const inProgressPercent = totalAuthorized > 0 ? Math.round((totalToExecute / totalAuthorized) * 100) : 0;
+  const availablePercent = totalAuthorized > 0 ? Math.round((totalAvailable / totalAuthorized) * 100) : 0;
+  const neutralPercent = Math.max(0, 100 - executionPercent - inProgressPercent - availablePercent);
+  const onTrackCount = Math.max(filteredRecords.length - criticalDeadlines - warningDeadlines, 0);
+  const pendingPrestacaoCount = warningDeadlines;
+  const delayedPrestacaoCount = criticalDeadlines;
+  const notStartedCount = Math.max(filteredRecords.filter((entry) => buildProcessoConsolidatedSummary(entry).valorTotalPago <= 0).length, 0);
+  const prestacaoTotal = onTrackCount + pendingPrestacaoCount + delayedPrestacaoCount + notStartedCount;
+  const onTrackPercent = prestacaoTotal > 0 ? Math.round((onTrackCount / prestacaoTotal) * 100) : 0;
+  const pendingPrestacaoPercent = prestacaoTotal > 0 ? Math.round((pendingPrestacaoCount / prestacaoTotal) * 100) : 0;
+  const delayedPrestacaoPercent = prestacaoTotal > 0 ? Math.round((delayedPrestacaoCount / prestacaoTotal) * 100) : 0;
+  const notStartedPrestacaoPercent = Math.max(0, 100 - onTrackPercent - pendingPrestacaoPercent - delayedPrestacaoPercent);
+  const metricHighlights = [
+    {
+      label: 'Processos ativos',
+      value: String(activeProcesses || records.length),
+      hint: `${records.length} cadastrados na base`,
+      icon: 'description',
+      tone: 'info',
+    },
+    {
+      label: 'Vigências críticas',
+      value: String(criticalDeadlines + warningDeadlines),
+      hint: 'Próximos 120 dias',
+      icon: 'event_repeat',
+      tone: 'warning',
+    },
+    {
+      label: 'Execução financeira',
+      value: metrics[2]?.value ?? metrics[0]?.value ?? 'R$ 0,00',
+      hint: metrics[2]?.hint ?? 'Carteira consolidada',
+      icon: 'monetization_on',
+      tone: 'success',
+    },
+    {
+      label: 'Alertas',
+      value: metrics[3]?.value ?? String(alerts.length),
+      hint: 'Requerem atenção',
+      icon: 'shield',
+      tone: 'danger',
+    },
+  ];
+  const financialLegend = [
+    { label: 'Executado', value: totalExecuted, percent: executionPercent, tone: 'success' as const },
+    { label: 'Em execução', value: totalToExecute, percent: inProgressPercent, tone: 'info' as const },
+    { label: 'A executar', value: totalAvailable, percent: availablePercent, tone: 'warning' as const },
+    { label: 'Residual', value: 0, percent: neutralPercent, tone: 'muted' as const },
+  ];
+  const prestacaoLegend = [
+    { label: 'Em dia', value: onTrackCount, percent: onTrackPercent, tone: 'success' as const },
+    { label: 'Pendente', value: pendingPrestacaoCount, percent: pendingPrestacaoPercent, tone: 'warning' as const },
+    { label: 'Em atraso', value: delayedPrestacaoCount, percent: delayedPrestacaoPercent, tone: 'danger' as const },
+    { label: 'Não iniciado', value: notStartedCount, percent: notStartedPrestacaoPercent, tone: 'muted' as const },
+  ];
 
   function renderRecentProcessId(id: string) {
     const parts = id.split('-').filter(Boolean);
@@ -1405,247 +1624,275 @@ function ManagementView({
 
   return (
     <section className="view dashboard-page">
-      <header className="dashboard-head">
-        <div className="crumbs">
-          {breadcrumb.map((item, index) => (
-            <span key={item} className={index === breadcrumb.length - 1 ? 'crumb is-current' : 'crumb'}>
-              {item}
-            </span>
-          ))}
+      <header className="dashboard-head dashboard-head--reference">
+        <div className="dashboard-head__topline">
+          <div className="crumbs dashboard-crumbs">
+            {breadcrumb.map((item, index) => (
+              <span key={item} className={index === breadcrumb.length - 1 ? 'crumb is-current' : 'crumb'}>
+                {item}
+              </span>
+            ))}
+          </div>
+          <div className="dashboard-toolbar" aria-label="Filtros do painel">
+            <button type="button" className="dashboard-toolbar__control">
+              <span className="material-symbols-outlined" aria-hidden="true">
+                calendar_month
+              </span>
+              2026
+              <span className="material-symbols-outlined" aria-hidden="true">
+                expand_more
+              </span>
+            </button>
+            <label className="dashboard-toolbar__control dashboard-toolbar__control--select">
+              <span className="material-symbols-outlined" aria-hidden="true">
+                account_balance
+              </span>
+              <span>Unidades</span>
+              <select value={sectorFilter} onChange={(event) => setSectorFilter(event.target.value)} aria-label="Filtrar por unidade">
+                {sectorOptions.map((option) => (
+                  <option key={option} value={option}>
+                    {option.replace('Todas as unidades', 'Todos')}
+                  </option>
+                ))}
+              </select>
+              <span className="material-symbols-outlined" aria-hidden="true">
+                expand_more
+              </span>
+            </label>
+            <button type="button" className="dashboard-toolbar__icon" aria-label="Notificações">
+              <span className="material-symbols-outlined" aria-hidden="true">
+                notifications
+              </span>
+              <strong>{alerts.length}</strong>
+            </button>
+          </div>
         </div>
         <div className="dashboard-head__row">
           <div className="dashboard-head__copy">
             <h2>{title.title}</h2>
             <p>{title.subtitle}</p>
           </div>
-          <div className="dashboard-head__meta">
-            <span className="dashboard-head__chip">Banco fictício local</span>
-            <span className="dashboard-hero__meta">
-              <span className="material-symbols-outlined">calendar_today</span>
-              <span>Atualizado em {dashboardUpdatedAt}</span>
+          <span className="dashboard-head__updated">
+            Última atualização: {dashboardUpdatedAt}
+            <span className="material-symbols-outlined" aria-hidden="true">
+              refresh
             </span>
-          </div>
+          </span>
         </div>
       </header>
 
-      <section className="dashboard-metrics dashboard-metrics--compact">
-        {metrics.map((metric) => (
-          <article key={metric.label} className={`dashboard-metric dashboard-metric--${metric.tone}`}>
-            <p>{metric.label}</p>
-            <div className="dashboard-metric__value-row">
+      <section className="dashboard-reference-metrics" aria-label="Resumo gerencial">
+        {metricHighlights.map((metric) => (
+          <article key={metric.label} className={`dashboard-reference-metric dashboard-reference-metric--${metric.tone}`}>
+            <span className="dashboard-reference-metric__icon material-symbols-outlined" aria-hidden="true">
+              {metric.icon}
+            </span>
+            <div>
+              <p>{metric.label}</p>
               <strong title={metric.value}>{formatDashboardMetricValue(metric.value)}</strong>
-              <span className="material-symbols-outlined" data-tone={metric.tone}>
-                {metric.icon}
-              </span>
+              <small>{metric.hint}</small>
             </div>
-            <small>{metric.hint}</small>
           </article>
         ))}
       </section>
 
-      <section className="dashboard-main dashboard-main--overview">
-        <div className="dashboard-left-stack">
-          <article className="dashboard-panel dashboard-panel--chart">
-            <div className="dashboard-panel__head">
+      <section className="dashboard-reference-grid">
+        <article className="dashboard-reference-card dashboard-reference-card--deadlines">
+          <div className="dashboard-reference-card__head">
+            <h3>Vigências críticas (próximos 90 dias)</h3>
+          </div>
+          <div className="dashboard-reference-deadlines">
+            {deadlines.length ? deadlines.map((row) => (
+              <div key={row.id} className={`dashboard-reference-deadline dashboard-reference-deadline--${row.tone}`}>
+                <strong>{row.vigency}</strong>
+                <span aria-hidden="true" />
+                <div>
+                  <b>{row.id}</b>
+                  <small>{row.object}</small>
+                </div>
+                <em>{row.deadlineDays === null ? 'A definir' : `${Math.abs(row.deadlineDays)} dias`}</em>
+              </div>
+            )) : <div className="dashboard-reference-empty">Nenhum processo encontrado para a unidade selecionada.</div>}
+          </div>
+          <button type="button" className="dashboard-reference-link">
+            Ver todas as vigências
+          </button>
+        </article>
+
+        <article className="dashboard-reference-card dashboard-reference-card--financial">
+          <div className="dashboard-reference-card__head">
+            <h3>Execução financeira</h3>
+          </div>
+          <div className="dashboard-donut-layout">
+            <div
+              className="dashboard-reference-donut dashboard-reference-donut--financial"
+              style={
+                {
+                  '--donut-a': `${executionPercent}%`,
+                  '--donut-b': `${executionPercent + inProgressPercent}%`,
+                  '--donut-c': `${executionPercent + inProgressPercent + availablePercent}%`,
+                } as CSSProperties
+              }
+              aria-label={`Execução financeira ${executionPercent}%`}
+            >
               <div>
-                <h3>Execução financeira anual</h3>
-                <p>Comparativo entre previsto e executado com base na carteira atual.</p>
-              </div>
-              <div className="dashboard-legend">
-                <span>
-                  <i className="dashboard-legend__swatch dashboard-legend__swatch--expected" />
-                  Previsto
-                </span>
-                <span>
-                  <i className="dashboard-legend__swatch dashboard-legend__swatch--executed" />
-                  Executado
-                </span>
+                <strong>{formatDashboardMetricValue(currencyFormatter.format(totalExecuted))}</strong>
+                <span>Executado</span>
               </div>
             </div>
-            <div className="dashboard-chart-shell">
-              <svg className="dashboard-chart-svg" viewBox="0 0 640 240" role="img" aria-label="Gráfico de execução financeira anual">
-                <defs>
-                  <linearGradient id="dashboardExpectedGradient" x1="0" x2="0" y1="0" y2="1">
-                    <stop offset="0%" stopColor="#cfd8e5" />
-                    <stop offset="100%" stopColor="#afbdd3" />
-                  </linearGradient>
-                  <linearGradient id="dashboardExecutedGradient" x1="0" x2="0" y1="0" y2="1">
-                    <stop offset="0%" stopColor="#1f3f73" />
-                    <stop offset="100%" stopColor="#0b2342" />
-                  </linearGradient>
-                </defs>
-
-                {[35, 70, 105, 140].map((y) => (
-                  <g key={y}>
-                    <line x1="24" x2="612" y1={y} y2={y} className="dashboard-chart-grid" />
-                  </g>
-                ))}
-
-                {dashboardBars.map((bar, index) => {
-                  const groupWidth = 142;
-                  const groupGap = 18;
-                  const startX = 36 + index * (groupWidth + groupGap);
-                  const chartTop = 54;
-                  const chartBottom = 186;
-                  const chartHeight = chartBottom - chartTop;
-                  const expectedHeight = Math.max(10, (bar.expected / 100) * chartHeight);
-                  const executedHeight = Math.max(10, (bar.executed / 100) * chartHeight);
-                  const expectedX = startX + 16;
-                  const executedX = startX + 50;
-                  const expectedY = chartBottom - expectedHeight;
-                  const executedY = chartBottom - executedHeight;
-                  const expectedAtTop = expectedY <= chartTop + 14;
-                  const executedAtTop = executedY <= chartTop + 14;
-                  const topLabelBand = chartTop - 14;
-                  const topLabelBandSecond = chartTop - 2;
-                  const expectedLabelY = expectedAtTop ? topLabelBand : expectedY - 8;
-                  const executedLabelY = executedAtTop ? topLabelBandSecond : executedY - 8;
-                  const expectedLabelClass = expectedAtTop
-                    ? 'dashboard-chart-value dashboard-chart-value--executed dashboard-chart-value--inside'
-                    : 'dashboard-chart-value';
-                  const executedLabelClass = executedAtTop
-                    ? 'dashboard-chart-value dashboard-chart-value--executed dashboard-chart-value--inside'
-                    : 'dashboard-chart-value dashboard-chart-value--executed';
-                  const expectedLabelX = expectedX + 12;
-                  const executedLabelX = executedX + 12;
-                  const expectedAnchor = 'middle';
-                  const executedAnchor = 'middle';
-
-                  return (
-                    <g key={bar.label}>
-                      <rect
-                        x={expectedX}
-                        y={expectedY}
-                        width="24"
-                        height={expectedHeight}
-                        rx="6"
-                        fill="url(#dashboardExpectedGradient)"
-                      />
-                      <rect
-                        x={executedX}
-                        y={executedY}
-                        width="24"
-                        height={executedHeight}
-                        rx="6"
-                        fill="url(#dashboardExecutedGradient)"
-                      />
-                      <text x={expectedLabelX} y={expectedLabelY} textAnchor={expectedAnchor} className={expectedLabelClass}>
-                        {bar.expected}%
-                      </text>
-                      <text x={executedLabelX} y={executedLabelY} textAnchor={executedAnchor} className={executedLabelClass}>
-                        {bar.executed}%
-                      </text>
-                      <text x={startX + 36} y="216" textAnchor="middle" className="dashboard-chart-label">
-                        {bar.label}
-                      </text>
-                    </g>
-                  );
-                })}
-              </svg>
-            </div>
-          </article>
-
-          <article className="dashboard-table-card dashboard-table-card--recent">
-            <div className="dashboard-table-card__head">
-              <div>
-                <h3>Processos recentes</h3>
-                <p>Últimos instrumentos atualizados na base consolidada.</p>
-              </div>
-              <button type="button" className="dashboard-link-button">
-                Ver Processos
-              </button>
-            </div>
-            <div className="table-wrap">
-              <table className="data-table dashboard-table">
-                <thead>
-                  <tr>
-                    <th>ID Processo</th>
-                    <th>Objeto / Instrumento</th>
-                    <th>Setor Responsável</th>
-                    <th>Prazo Final</th>
-                    <th>Status</th>
-                    <th>Ações</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {recentRows.map((row) => (
-                    <tr key={row.id}>
-                      <td>
-                        <div className="item-title">{renderRecentProcessId(row.id)}</div>
-                        <div className="item-subtitle">{row.vigency}</div>
-                      </td>
-                      <td>
-                        <div className="item-title">{row.title}</div>
-                        <div className="item-subtitle">{row.subtitle}</div>
-                      </td>
-                      <td className="td-muted">{row.sector}</td>
-                      <td>{row.vigency}</td>
-                      <td>
-                        <span className={`badge dashboard-status-badge badge--${row.statusTone}`} title={row.status}>
-                          {row.status}
-                        </span>
-                      </td>
-                      <td>
-                        <button type="button" className="dashboard-row-action" aria-label={`Abrir ${row.id}`}>
-                          <span className="material-symbols-outlined">open_in_new</span>
-                        </button>
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-          </article>
-        </div>
-
-        <aside className="dashboard-side-stack">
-          <article className="dashboard-alert-panel dashboard-alert-panel--tight">
-            <div className="dashboard-deadline-panel__head">
-              <div>
-                <div className="section-kicker section-kicker--detail">Prioridade operacional</div>
-                <h3>Vigência próxima</h3>
-                <p>Processos que exigem acompanhamento imediato para evitar perda de prazo.</p>
-              </div>
-              <div className="dashboard-deadline-panel__summaryline" aria-label="Resumo das vigências">
-                <span className="dashboard-deadline-panel__stat dashboard-deadline-panel__stat--critical">
-                  <strong>{criticalDeadlines}</strong>
-                  <small>Críticos</small>
-                </span>
-                <span className="dashboard-deadline-panel__stat dashboard-deadline-panel__stat--warning">
-                  <strong>{warningDeadlines}</strong>
-                  <small>Próximos</small>
-                </span>
-              </div>
-            </div>
-            <div className="dashboard-alert-list">
-              {deadlines.map((row) => (
-                <div key={row.id} className={`dashboard-deadline-item dashboard-deadline-item--${row.tone}`}>
-                  <div className="dashboard-deadline-item__marker" aria-hidden="true" />
-                  <div className="dashboard-deadline-item__main">
-                    <strong>{row.id}</strong>
-                    <span>{row.object}</span>
+            <div className="dashboard-reference-legend dashboard-reference-legend--financial">
+              {financialLegend.map((item) => (
+                <div key={item.label} className={`dashboard-reference-legend__item dashboard-reference-legend__item--${item.tone}`}>
+                  <div className="dashboard-reference-legend__label">
+                    <span>{item.label}</span>
                   </div>
-                  <div className="dashboard-deadline-item__meta">
-                    <span className={`dashboard-deadline-chip dashboard-deadline-chip--${deadlineBadgeTone(row.tone)}`} title={row.deadline}>
-                      <span className="dashboard-deadline-chip__label">{row.deadlineLabel}</span>
-                      <span className="dashboard-deadline-chip__count">
-                        {row.deadlineDays === null ? 'Prazo indefinido' : `${Math.abs(row.deadlineDays)} dias`}
-                      </span>
-                    </span>
-                    <small>{row.vigency}</small>
+                  <div className="dashboard-reference-legend__metric">
+                    <strong>{formatDashboardMetricValue(currencyFormatter.format(item.value))}</strong>
+                    <small>{item.percent}%</small>
                   </div>
                 </div>
               ))}
             </div>
-            <button type="button" className="dashboard-link-button dashboard-link-button--center dashboard-alerts__button">
-              <span className="material-symbols-outlined" aria-hidden="true">
-                schedule
-              </span>
-              <span>Ver vigências</span>
-              <span className="dashboard-alerts__button-arrow material-symbols-outlined" aria-hidden="true">
-                arrow_forward
-              </span>
+          </div>
+          <button type="button" className="dashboard-reference-link">
+            Ver relatório financeiro
+          </button>
+        </article>
+
+        <article className="dashboard-reference-card dashboard-reference-card--prestacao">
+          <div className="dashboard-reference-card__head">
+            <h3>Prestação de Contas</h3>
+          </div>
+          <div className="dashboard-donut-layout dashboard-donut-layout--compact">
+            <div
+              className="dashboard-reference-donut dashboard-reference-donut--prestacao"
+              style={
+                {
+                  '--donut-a': `${onTrackPercent}%`,
+                  '--donut-b': `${onTrackPercent + pendingPrestacaoPercent}%`,
+                  '--donut-c': `${onTrackPercent + pendingPrestacaoPercent + delayedPrestacaoPercent}%`,
+                } as CSSProperties
+              }
+              aria-label={`Prestação em dia ${onTrackPercent}%`}
+            >
+              <div>
+                <strong>{onTrackPercent}%</strong>
+                <span>Em dia</span>
+              </div>
+            </div>
+            <div className="dashboard-reference-legend dashboard-reference-legend--status">
+              {prestacaoLegend.map((item) => (
+                <div key={item.label} className={`dashboard-reference-legend__item dashboard-reference-legend__item--${item.tone}`}>
+                  <div className="dashboard-reference-legend__label">
+                    <span>{item.label}</span>
+                  </div>
+                  <div className="dashboard-reference-legend__metric">
+                    <strong>{item.value}</strong>
+                    <small>{item.percent}%</small>
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+          <button type="button" className="dashboard-reference-link">
+            Ver todas as prestações
+          </button>
+        </article>
+      </section>
+
+      <section className="dashboard-reference-lower">
+        <article className="dashboard-table-card dashboard-table-card--recent dashboard-reference-card">
+          <div className="dashboard-table-card__head">
+            <div>
+              <h3>Processos recentes</h3>
+            </div>
+          </div>
+          <div className="table-wrap">
+            <table className="data-table dashboard-table">
+              <thead>
+                <tr>
+                  <th>Nº do Processo</th>
+                  <th>Instrumento</th>
+                  <th>Órgão / Entidade</th>
+                  <th>Objeto</th>
+                  <th>Valor</th>
+                  <th>Situação</th>
+                  <th>Atualizado em</th>
+                </tr>
+              </thead>
+              <tbody>
+                  {recentRows.length ? recentRows.map((row) => (
+                    <tr key={row.id}>
+                    <td>
+                      <div className="item-title">{renderRecentProcessId(row.ref || row.id)}</div>
+                    </td>
+                    <td className="td-muted">{row.title}</td>
+                    <td className="td-muted">{row.sector}</td>
+                    <td>{row.subtitle}</td>
+                    <td className="td-strong">{formatDashboardMetricValue(row.amount)}</td>
+                    <td>
+                      <span className={`badge dashboard-status-badge badge--${row.statusTone}`} title={row.status}>
+                        {row.status}
+                      </span>
+                    </td>
+                    <td>{row.vigency}</td>
+                    </tr>
+                  )) : (
+                    <tr>
+                      <td colSpan={7} className="dashboard-table__empty">Nenhum processo encontrado para a unidade selecionada.</td>
+                    </tr>
+                  )}
+                </tbody>
+              </table>
+            </div>
+          <button type="button" className="dashboard-reference-link dashboard-reference-link--table">
+            Ver todos os processos
+          </button>
+        </article>
+
+        <aside className="dashboard-reference-side">
+          <article className="dashboard-reference-card dashboard-reference-card--alerts">
+            <div className="dashboard-panel__head">
+              <div>
+                <h3>Alertas e Riscos</h3>
+              </div>
+            </div>
+            <div className="dashboard-reference-alerts">
+              {alerts.map((item) => (
+                <div key={item.title} className={`dashboard-reference-alert dashboard-reference-alert--${item.tone}`}>
+                  <span className="material-symbols-outlined" aria-hidden="true">
+                    {item.tone === 'critical' ? 'warning' : item.tone === 'warning' ? 'error' : 'info'}
+                  </span>
+                  <div>
+                    <strong>{item.title}</strong>
+                    <small>{item.detail}</small>
+                  </div>
+                  <em>{item.meta}</em>
+                </div>
+              ))}
+            </div>
+            <button type="button" className="dashboard-reference-link">
+              Ver todos os alertas
             </button>
+          </article>
+
+          <article className="dashboard-reference-card dashboard-reference-card--quick">
+            <h3>Ações rápidas</h3>
+            <div className="dashboard-quick-actions">
+              {[
+                ['note_add', 'Novo Convênio'],
+                ['handshake', 'Novo Instrumento'],
+                ['fact_check', 'Nova Prestação de Contas'],
+                ['report', 'Registrar Risco'],
+              ].map(([icon, label]) => (
+                <button key={label} type="button" className="dashboard-quick-action">
+                  <span className="material-symbols-outlined" aria-hidden="true">
+                    {icon}
+                  </span>
+                  <strong>{label}</strong>
+                </button>
+              ))}
+            </div>
           </article>
         </aside>
       </section>
@@ -1666,11 +1913,6 @@ function ManagementView({
 
     </section>
   );
-}
-
-function deadlineBadgeTone(tone: DeadlineTone) {
-  if (tone === 'critical') return 'danger';
-  return tone;
 }
 
 function formatDashboardMetricValue(value: string) {
@@ -1951,7 +2193,7 @@ function AdjustmentView({
           <div className="process-module-card__head">
             <div>
               <div className="section-kicker">Módulo operacional</div>
-              <h3>Ajuste do Plano de Ação</h3>
+              <h3>Ajuste do Plano de Trabalho</h3>
               <p>Registre solicitações, autorização, documento autorizador e impacto financeiro sobre o plano aprovado.</p>
             </div>
             <strong>{recordTitle(record)}</strong>
@@ -1966,222 +2208,346 @@ function AdjustmentView({
 function PrestacaoView({
   breadcrumb,
   title,
-  metrics,
-  checklist,
-  footer,
-  records,
   record,
-  onSelectRecord,
-  onGlobalChange,
-  onItemChange,
+  onBack,
 }: {
   breadcrumb: string[]; 
   title: { title: string; subtitle: string; action: string };
-  metrics: ViewData['prestacaoMetrics'];
-  checklist: ViewData['prestacaoChecklist'];
-  footer: ViewData['prestacaoFooter'];
-  records: ProcessosRecord[];
   record: ProcessosRecord | null;
-  onSelectRecord: (recordId: string) => void;
-  onGlobalChange: <K extends keyof PrestacaoContasForm>(field: K, value: PrestacaoContasForm[K]) => void;
-  onItemChange: (itemId: string, field: keyof PrestacaoItemForm, value: string) => void;
+  onBack: () => void;
 }) {
-  const [searchQuery, setSearchQuery] = useState('');
+  const currencyFormatter = new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' });
+  const percentFormatter = new Intl.NumberFormat('pt-BR', { minimumFractionDigits: 1, maximumFractionDigits: 1 });
   const prestacaoItems = useMemo(() => syncPrestacaoItemsForRecord(record), [record]);
-  const contractNumber =
-    record?.cadastro.processoContratacao.contratoNumero || record?.cadastro.processoContratacao.processoSei || 'A definir';
-  const processNumber = record?.cadastro.dadosGerais.numeroInternoSeap || record?.cadastro.dadosGerais.instrumento || 'A definir';
-  const contractValue = record?.cadastro.processoContratacao.valorTotalContratado || record?.cadastro.dadosGerais.valorGlobal || 'A definir';
-  const totalItemCount = prestacaoItems.length;
-  const completedChecklistCount = checklist.filter((entry) => entry.tone === 'success').length;
-  const checklistProgress = checklist.length ? Math.round((completedChecklistCount / checklist.length) * 100) : 0;
-  const selectedRecordId = record?.id ?? '';
-  const normalizedSearch = searchQuery.trim().toLowerCase();
-  const filteredRecords = useMemo(() => {
-    const matchesRecord = (candidate: ProcessosRecord) => {
-      if (!normalizedSearch) return true;
-
-      const haystack = [
-        candidate.id,
-        candidate.cadastro.dadosGerais.numeroInternoSeap,
-        candidate.cadastro.dadosGerais.numeroInstrumento,
-        candidate.cadastro.dadosGerais.instrumento,
-        candidate.cadastro.dadosGerais.eixo,
-        candidate.cadastro.dadosGerais.setorCorrelacionado,
-        candidate.cadastro.dadosGerais.status,
-      ]
-        .filter(Boolean)
-        .join(' ')
-        .toLowerCase();
-
-      return haystack.includes(normalizedSearch);
-    };
-
-    return [...records]
-      .filter(matchesRecord)
-      .sort((left, right) => {
-        if (left.id === selectedRecordId) return -1;
-        if (right.id === selectedRecordId) return 1;
-        return recordTitle(left).localeCompare(recordTitle(right), 'pt-BR');
-      });
-  }, [normalizedSearch, records, selectedRecordId]);
-  const flowSteps = [
-    {
-      href: '#prestacao-instrumento',
-      index: '01',
-      label: 'Instrumento',
-      detail: record ? processNumber : 'Obrigatório',
-    },
-    {
-      href: '#prestacao-itens',
-      index: '02',
-      label: 'Itens',
-      detail: `${totalItemCount} ${totalItemCount === 1 ? 'item' : 'itens'}`,
-    },
-    {
-      href: '#prestacao-resumo',
-      index: '03',
-      label: 'Resumo',
-      detail: `${checklistProgress}% documental`,
-    },
-    {
-      href: '#prestacao-global',
-      index: '04',
-      label: 'Base da prestação',
-      detail: record ? footer.status : 'Aguardando',
-    },
+  const summary = record ? buildProcessoConsolidatedSummary(record) : null;
+  const dados = record?.cadastro.dadosGerais;
+  const prestacao = record?.cadastro.prestacaoContas;
+  const processNumber = dados?.numeroInternoSeap || dados?.numeroInstrumento || record?.id || '012/2023';
+  const processTitle = dados?.instrumento || 'Implantação de Centro de Cidadania';
+  const convenente = dados?.setorCorrelacionado || 'Prefeitura Municipal de Natal';
+  const valorGlobal = summary?.valorTotalAutorizado ?? parsePlanMoney(dados?.valorGlobal || 'R$ 0,00');
+  const valorExecutado = summary?.valorTotalPago ?? prestacaoItems.reduce((sum, item) => sum + parsePlanMoney(item.valorExecutadoItem), 0);
+  const saldoAtual = Math.max(valorGlobal - valorExecutado, 0);
+  const execPercent = valorGlobal > 0 ? (valorExecutado / valorGlobal) * 100 : 0;
+  const documentChecklist = useMemo(() => buildPrestacaoChecklistEntries(record, prestacaoItems), [record, prestacaoItems]);
+  const docsProgress = useMemo(() => {
+    const weighted = documentChecklist.reduce((sum, item) => sum + (item.status === 'Enviado' ? 1 : item.status === 'Parcial' ? 0.5 : 0), 0);
+    return documentChecklist.length ? Math.round((weighted / documentChecklist.length) * 100) : 0;
+  }, [documentChecklist]);
+  const sentDocuments = documentChecklist.filter((item) => item.status === 'Enviado').length;
+  const pendingDocuments = documentChecklist.filter((item) => item.status !== 'Enviado').length;
+  const itemRows = useMemo(() => {
+    return prestacaoItems.map((item) => {
+      const previsto = parsePlanMoney(item.valorTotalPrevisto);
+      const executado = parsePlanMoney(item.valorExecutadoItem);
+      const saldo = Math.max(previsto - executado, 0);
+      const percentual = previsto > 0 ? (executado / previsto) * 100 : 0;
+      const tone = prestacaoRowTone(item.statusItemPrestacao, percentual, item);
+      return {
+        id: item.itemPlanoId,
+        titulo: item.itemPlanoDescricao,
+        previsto,
+        executado,
+        saldo,
+        percentual,
+        tone: tone as 'success' | 'warning' | 'danger',
+      };
+    });
+  }, [prestacaoItems]);
+  const totalPrevistoItens = itemRows.reduce((sum, item) => sum + item.previsto, 0);
+  const totalExecutadoItens = itemRows.reduce((sum, item) => sum + item.executado, 0);
+  const totalSaldoItens = itemRows.reduce((sum, item) => sum + item.saldo, 0);
+  const docsSummaryRows = buildPrestacaoDocumentSummary(documentChecklist);
+  const criticalPendings = buildPrestacaoPendings(documentChecklist, prestacaoItems);
+  const progressLegend = buildPrestacaoProgressLegend(itemRows, pendingDocuments);
+  const completionPercent = Math.round(Math.max(0, Math.min(100, (execPercent * 0.65) + (docsProgress * 0.35))));
+  const progressDonut = buildPrestacaoProgressDonut(progressLegend);
+  const accountBalance = parsePlanMoney(dados?.saldoConta || currencyFormatter.format(saldoAtual));
+  const latestUpdate = record ? formatDashboardUpdatedAt(record.updatedAt) : '20/05/2025 09:45';
+  const yearLabel = record?.createdAt ? new Date(record.createdAt).getFullYear() : 2025;
+  const sideSteps = [
+    { href: '#prestacao-resumo', label: 'Resumo', hint: 'Visão geral da prestação', icon: 'info' },
+    { href: '#prestacao-itens', label: 'Itens', hint: 'Execução por item de despesa', icon: 'add_circle' },
+    { href: '#prestacao-documentos', label: 'Documentos', hint: 'Comprovações e anexos', icon: 'description' },
+    { href: '#prestacao-conciliacao', label: 'Conciliação', hint: 'Financeira', icon: 'sync_alt' },
+    { href: '#prestacao-encerramento', label: 'Encerramento', hint: 'Conclusão da prestação', icon: 'task_alt' },
   ];
 
   return (
-    <section className="view prestacao-view">
-      <SectionHeader breadcrumb={breadcrumb} title={title.title} subtitle={title.subtitle} action={title.action} />
-
-      <nav className="prestacao-flow-nav" aria-label="Fluxo da prestação de contas">
-        {flowSteps.map((step) => (
-          <a
-            key={step.href}
-            className={record || step.href === '#prestacao-instrumento' ? 'prestacao-flow-nav__item' : 'prestacao-flow-nav__item is-disabled'}
-            href={record || step.href === '#prestacao-instrumento' ? step.href : '#prestacao-instrumento'}
-            aria-disabled={record || step.href === '#prestacao-instrumento' ? undefined : true}
-          >
-            <span className="prestacao-flow-nav__index">{step.index}</span>
-            <span className="prestacao-flow-nav__text">
-              <strong>{step.label}</strong>
-              <small>{step.detail}</small>
-            </span>
-          </a>
-        ))}
-      </nav>
-
-            <article id="prestacao-instrumento" className="prestacao-process-rail prestacao-anchor">
-        <div className="prestacao-process-rail__head">
-          <div className="prestacao-process-rail__copy">
-            <div className="section-kicker">Processos vinculados</div>
-            <h3>Selecione o processo principal e abra a prestação do item em seguida.</h3>
-            <p>Os processos aparecem em uma faixa horizontal para acelerar a leitura. Ao abrir um processo, os itens vinculados continuam abaixo na mesma tela.</p>
+    <section className="view prestacao-reference-page">
+      <header className="prestacao-reference-head">
+        <div className="prestacao-reference-head__top">
+          <div className="crumbs prestacao-reference-crumbs">
+            <span className="crumb">Início</span>
+            <span className="crumb">{breadcrumb[breadcrumb.length - 1] ?? 'Prestação de Contas'}</span>
+            <span className="crumb is-current">{processNumber}</span>
           </div>
-          <label className="prestacao-search prestacao-process-rail__search" htmlFor="prestacao-search-input">
-            <span className="material-symbols-outlined" aria-hidden="true">
-              search
-            </span>
-            <input
-              id="prestacao-search-input"
-              type="search"
-              value={searchQuery}
-              onChange={(event) => setSearchQuery(event.target.value)}
-              placeholder="Pesquisar por número, eixo, setor ou status"
-            />
-          </label>
+          <div className="prestacao-reference-head__actions">
+            <button type="button" className="prestacao-reference-filter">
+              <span className="material-symbols-outlined" aria-hidden="true">calendar_month</span>
+              {yearLabel}
+              <span className="material-symbols-outlined" aria-hidden="true">expand_more</span>
+            </button>
+            <button type="button" className="prestacao-reference-circle" aria-label="Ajuda">
+              <span className="material-symbols-outlined" aria-hidden="true">help</span>
+            </button>
+            <button type="button" className="prestacao-reference-circle prestacao-reference-circle--notify" aria-label="Notificações">
+              <span className="material-symbols-outlined" aria-hidden="true">notifications</span>
+              <strong>12</strong>
+            </button>
+            <span className="prestacao-reference-avatar">FC</span>
+          </div>
         </div>
 
-        <div className="prestacao-process-rail__list" aria-label="Lista horizontal de processos disponíveis">
-          {filteredRecords.length ? (
-            filteredRecords.map((candidate) => {
-              const isActive = candidate.id === selectedRecordId;
-              const summary = buildProcessoConsolidatedSummary(candidate);
-              const itemCount = candidate.cadastro.planoTrabalho.itens.length;
-              return (
-                <article key={candidate.id} className={isActive ? 'prestacao-process-card is-active' : 'prestacao-process-card'}>
-                  <div className="prestacao-process-card__head">
-                    <div className="prestacao-process-card__title">
-                      <strong>{recordTitle(candidate)}</strong>
-                      <span>
-                        {candidate.cadastro.dadosGerais.instrumento || 'Instrumento sem nome'} · {candidate.cadastro.dadosGerais.eixo || 'Eixo não informado'}
-                      </span>
-                    </div>
-                    <span className={`badge badge--${summary.percentualExecutado > 0 ? 'info' : 'neutral'}`}>
-                      {itemCount} {itemCount === 1 ? 'item' : 'itens'}
-                    </span>
-                  </div>
-                  <div className="prestacao-process-card__meta">
-                    <span>Setor: {candidate.cadastro.dadosGerais.setorCorrelacionado || 'Não informado'}</span>
-                    <span>Status: {candidate.cadastro.dadosGerais.status || 'A definir'}</span>
-                    <span>Saldo: {summary.saldoDisponivel.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' })}</span>
-                    <span>Executado: {summary.valorTotalPago.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' })}</span>
-                  </div>
-                  <div className="prestacao-process-card__foot">
-                    <button
-                      type="button"
-                      className={isActive ? 'prestacao-process-card__action is-active' : 'prestacao-process-card__action'}
-                      onClick={() => {
-                        onSelectRecord(candidate.id);
-                        window.requestAnimationFrame(() => {
-                          document.getElementById('prestacao-itens')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
-                        });
-                      }}
-                    >
-                      <span className="material-symbols-outlined" aria-hidden="true">open_in_new</span>
-                      {isActive ? 'Processo aberto' : 'Abrir prestação'}
-                    </button>
-                    <small>{candidate.cadastro.dadosGerais.numeroInternoSeap || candidate.cadastro.dadosGerais.numeroInstrumento || 'Sem referência'}</small>
-                  </div>
-                </article>
-              );
-            })
-          ) : (
-            <div className="prestacao-process-rail__empty">
-              <strong>Nenhum instrumento encontrado</strong>
-              <p>Tente pesquisar por número interno, eixo, setor ou status.</p>
-            </div>
-          )}
+        <div className="prestacao-reference-head__row">
+          <div>
+            <h2>{title.title}</h2>
+            <p>Acompanhe a execução financeira, documentos e pendências para encerramento da prestação.</p>
+          </div>
+          <div className="prestacao-reference-head__meta">
+            <span>Última atualização: {latestUpdate}</span>
+            <button type="button" aria-label="Atualizar">
+              <span className="material-symbols-outlined" aria-hidden="true">refresh</span>
+            </button>
+          </div>
         </div>
-
-        <div className="prestacao-process-rail__selected">
-          <span>Selecionado para prestação</span>
-          <strong>{selectedRecordId ? processNumber : 'Nenhum instrumento selecionado'}</strong>
-          <small>{selectedRecordId ? `Contrato / processo: ${contractNumber}` : 'Escolha um processo acima para carregar os itens vinculados.'}</small>
-          <small>{selectedRecordId ? `Valor contratado: ${contractValue}` : 'Cada item do processo selecionado será aberto abaixo para prestação.'}</small>
-        </div>
-      </article><div id="prestacao-resumo" className="prestacao-section-head prestacao-anchor">
-        <div>
-          <div className="section-kicker">Resumo operacional</div>
-          <h3>Leitura rápida do instrumento antes do lançamento</h3>
-        </div>
-        <p>Este bloco substitui a lógica de painel genérico por uma visão própria da prestação: instrumento, itens, execução e pendências.</p>
-      </div>
-
-      <section className="prestacao-summary-grid prestacao-metrics-strip" aria-label="Resumo da prestação">
-        {metrics.map((metric) => (
-          <article key={metric.label} className={`prestacao-summary-card prestacao-summary-card--${metric.tone}`}>
-            <span className="prestacao-summary-card__icon material-symbols-outlined" aria-hidden="true">
-              {metric.icon}
-            </span>
-            <span>{metric.label}</span>
-            <strong title={metric.value}>{formatDashboardMetricValue(metric.value)}</strong>
-            <small>{metric.hint}</small>
-          </article>
-        ))}
-      </section>
+      </header>
 
       {record ? (
-        <PrestacaoContasStep
-          data={record.cadastro.prestacaoContas}
-          items={prestacaoItems}
-          totalGlobal={record.cadastro.dadosGerais.valorGlobal || 'A definir'}
-          footer={footer}
-          onGlobalChange={onGlobalChange}
-          onItemChange={onItemChange}
-        />
+        <section className="prestacao-reference-layout">
+          <aside className="prestacao-reference-left">
+            <button type="button" className="prestacao-reference-back" onClick={onBack}>
+              <span className="material-symbols-outlined" aria-hidden="true">arrow_back</span>
+              Voltar para lista
+            </button>
+
+            <article className="prestacao-reference-process-card">
+              <span>Processo</span>
+              <h3>{processNumber}</h3>
+              <mark>{dados?.status || 'Em execução'}</mark>
+              <dl>
+                <div><dt>Convênio</dt><dd>{processTitle}</dd></div>
+                <div><dt>Convenente</dt><dd>{convenente}</dd></div>
+                <div><dt>Valor Global</dt><dd>{currencyFormatter.format(valorGlobal)}</dd></div>
+                <div><dt>Vigência</dt><dd>{dados?.vigenciaInicial || '-'} a {dados?.vigenciaFinal || '-'}</dd></div>
+              </dl>
+            </article>
+
+            <nav className="prestacao-reference-local-nav" aria-label="Navegação interna da prestação">
+              {sideSteps.map((step, index) => (
+                <a key={step.href} href={step.href} className={index === 0 ? 'is-active' : ''}>
+                  <span className="material-symbols-outlined" aria-hidden="true">{step.icon}</span>
+                  <div>
+                    <strong>{step.label}</strong>
+                    <small>{step.hint}</small>
+                  </div>
+                </a>
+              ))}
+            </nav>
+          </aside>
+
+          <div className="prestacao-reference-main">
+            <section id="prestacao-resumo" className="prestacao-reference-card">
+              <div className="prestacao-reference-card__head">
+                <h3>Resumo operacional</h3>
+              </div>
+              <div className="prestacao-reference-metrics">
+                <article className="prestacao-reference-metric is-success">
+                  <span className="material-symbols-outlined" aria-hidden="true">monetization_on</span>
+                  <div><small>Valor executado</small><strong>{currencyFormatter.format(valorExecutado)}</strong><em>{percentFormatter.format(execPercent)}% do valor global</em></div>
+                </article>
+                <article className="prestacao-reference-metric is-warning">
+                  <span className="material-symbols-outlined" aria-hidden="true">account_balance_wallet</span>
+                  <div><small>Saldo</small><strong>{currencyFormatter.format(saldoAtual)}</strong><em>{percentFormatter.format(Math.max(0, 100 - execPercent))}% do valor global</em></div>
+                </article>
+                <article className="prestacao-reference-metric is-info">
+                  <span className="material-symbols-outlined" aria-hidden="true">description</span>
+                  <div><small>Documentos</small><strong>{sentDocuments} / {documentChecklist.length}</strong><em>{docsProgress}% enviados</em></div>
+                </article>
+                <article className="prestacao-reference-metric is-danger">
+                  <span className="material-symbols-outlined" aria-hidden="true">warning</span>
+                  <div><small>Pendências</small><strong>{pendingDocuments}</strong><em>Requerem atenção</em></div>
+                </article>
+              </div>
+            </section>
+
+            <section id="prestacao-itens" className="prestacao-reference-card">
+              <div className="prestacao-reference-card__head">
+                <h3>Itens</h3>
+              </div>
+              <div className="prestacao-reference-table-wrap">
+                <table className="prestacao-reference-table">
+                  <thead>
+                    <tr>
+                      <th>Item de despesa</th>
+                      <th>Previsto (R$)</th>
+                      <th>Executado (R$)</th>
+                      <th>Saldo (R$)</th>
+                      <th>% Execução</th>
+                      <th>Situação</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {itemRows.map((item, index) => (
+                      <tr key={item.id}>
+                        <td>{index + 1}. {item.titulo}</td>
+                        <td>{currencyFormatter.format(item.previsto)}</td>
+                        <td>{currencyFormatter.format(item.executado)}</td>
+                        <td>{currencyFormatter.format(item.saldo)}</td>
+                        <td>
+                          <div className="prestacao-reference-progress-row">
+                            <span className={`prestacao-reference-progress-bar is-${item.tone}`}>
+                              <i style={{ width: `${Math.max(0, Math.min(100, item.percentual))}%` }} />
+                            </span>
+                            <strong>{percentFormatter.format(item.percentual)}%</strong>
+                          </div>
+                        </td>
+                        <td><span className={`prestacao-reference-status is-${item.tone}`}>{prestacaoRowLabel(item.tone)}</span></td>
+                      </tr>
+                    ))}
+                    <tr className="is-total">
+                      <td>Total</td>
+                      <td>{currencyFormatter.format(totalPrevistoItens)}</td>
+                      <td>{currencyFormatter.format(totalExecutadoItens)}</td>
+                      <td>{currencyFormatter.format(totalSaldoItens)}</td>
+                      <td>{percentFormatter.format(totalPrevistoItens > 0 ? (totalExecutadoItens / totalPrevistoItens) * 100 : 0)}%</td>
+                      <td>—</td>
+                    </tr>
+                  </tbody>
+                </table>
+              </div>
+              <a className="prestacao-reference-link" href="#prestacao-documentos">Ver detalhamento por item</a>
+            </section>
+
+            <div className="prestacao-reference-bottom">
+              <section id="prestacao-documentos" className="prestacao-reference-card">
+                <div className="prestacao-reference-card__head">
+                  <h3>Documentos comprobatórios</h3>
+                </div>
+                <div className="prestacao-reference-table-wrap">
+                  <table className="prestacao-reference-table prestacao-reference-table--docs">
+                    <thead>
+                      <tr>
+                        <th>Tipo de documento</th>
+                        <th>Obrigatório</th>
+                        <th>Enviados</th>
+                        <th>Situação</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {docsSummaryRows.map((row) => (
+                        <tr key={row.label}>
+                          <td>{row.label}</td>
+                          <td>{row.required}</td>
+                          <td>{row.sent}</td>
+                          <td><span className={`prestacao-reference-status is-${row.tone}`}>{row.status}</span></td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+                <a className="prestacao-reference-link" href="#prestacao-encerramento">Gerenciar documentos</a>
+              </section>
+
+              <section id="prestacao-conciliacao" className="prestacao-reference-card">
+                <div className="prestacao-reference-card__head">
+                  <h3>Conciliação financeira</h3>
+                </div>
+                <dl className="prestacao-reference-financial">
+                  <div><dt>Saldo da conta específica (extrato)</dt><dd>{currencyFormatter.format(accountBalance || saldoAtual)}</dd></div>
+                  <div><dt>(-) Créditos não identificados</dt><dd>{currencyFormatter.format(0)}</dd></div>
+                  <div><dt>(-) Débitos não identificados</dt><dd>{currencyFormatter.format(0)}</dd></div>
+                  <div className="is-total"><dt>(=) Saldo conciliado</dt><dd>{currencyFormatter.format(accountBalance || saldoAtual)}</dd></div>
+                </dl>
+                <div className="prestacao-reference-note is-success">
+                  <span className="material-symbols-outlined" aria-hidden="true">check_circle</span>
+                  <div>
+                    <strong>Conciliação realizada em {latestUpdate}</strong>
+                    <small>Por {prestacao?.responsavelPrestacao || 'Felipe Cabral'}</small>
+                  </div>
+                </div>
+                <a className="prestacao-reference-link" href="#prestacao-encerramento">Ver conciliações anteriores</a>
+              </section>
+            </div>
+
+            <div id="prestacao-encerramento" className="prestacao-reference-inline-note">
+              <span className="material-symbols-outlined" aria-hidden="true">info</span>
+              <p>Após finalizar, a prestação será enviada para análise da área técnica responsável.</p>
+            </div>
+          </div>
+
+          <aside className="prestacao-reference-right">
+            <section className="prestacao-reference-card">
+              <div className="prestacao-reference-card__head">
+                <h3>Checklist documental</h3>
+              </div>
+              <div className="prestacao-reference-checklist-head">
+                <strong>{sentDocuments} de {documentChecklist.length} documentos enviados</strong>
+                <div className="prestacao-reference-progress-line"><i style={{ width: `${docsProgress}%` }} /></div>
+                <span>{docsProgress}%</span>
+              </div>
+              <div className="prestacao-reference-checklist">
+                {documentChecklist.map((item) => (
+                  <div key={item.title} className="prestacao-reference-checklist__item">
+                    <span className={`prestacao-reference-dot is-${item.tone}`} />
+                    <strong>{item.title}</strong>
+                    <em className={`is-${item.tone}`}>{item.status}</em>
+                  </div>
+                ))}
+              </div>
+              <a className="prestacao-reference-link" href="#prestacao-documentos">Ver todos os documentos</a>
+            </section>
+
+            <section className="prestacao-reference-card">
+              <div className="prestacao-reference-card__head">
+                <h3>Pendências críticas</h3>
+                <span className="prestacao-reference-pill">{criticalPendings.length} pendências</span>
+              </div>
+              <div className="prestacao-reference-pending-list">
+                {criticalPendings.map((item) => (
+                  <div key={item.title} className="prestacao-reference-pending">
+                    <div>
+                      <strong>{item.title}</strong>
+                      <small>{item.detail}</small>
+                    </div>
+                    <span>{item.deadline}</span>
+                  </div>
+                ))}
+              </div>
+              <a className="prestacao-reference-link" href="#prestacao-encerramento">Ver todas as pendências</a>
+            </section>
+
+            <section className="prestacao-reference-card">
+              <div className="prestacao-reference-card__head">
+                <h3>Progresso da prestação</h3>
+              </div>
+              <div className="prestacao-reference-donut-layout">
+                <div className="prestacao-reference-donut" style={{ '--prestacao-donut': progressDonut } as CSSProperties}>
+                  <div>
+                    <strong>{completionPercent}%</strong>
+                    <span>Concluído</span>
+                  </div>
+                </div>
+                <div className="prestacao-reference-donut-legend">
+                  {progressLegend.map((item) => (
+                    <div key={item.label}>
+                      <span><i className={`is-${item.tone}`} />{item.label}</span>
+                      <strong>{item.percent}%</strong>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            </section>
+
+            <button type="button" className="prestacao-reference-finalize">
+              <span className="material-symbols-outlined" aria-hidden="true">task_alt</span>
+              <div>
+                <strong>{title.action}</strong>
+                <small>Encerrar e enviar para análise</small>
+              </div>
+            </button>
+          </aside>
+        </section>
       ) : (
         <article className="empty-module-state">
           <strong>Nenhum processo selecionado</strong>
@@ -2190,6 +2556,117 @@ function PrestacaoView({
       )}
     </section>
   );
+}
+
+function buildPrestacaoChecklistEntries(record: ProcessosRecord | null, items: PrestacaoItemForm[]) {
+  const prestacao = record?.cadastro.prestacaoContas;
+  const any = (predicate: (item: PrestacaoItemForm) => boolean) => items.some(predicate);
+  const all = (predicate: (item: PrestacaoItemForm) => boolean) => items.length > 0 && items.every(predicate);
+  const statusFrom = (complete: boolean, partial: boolean) =>
+    complete ? ({ status: 'Enviado', tone: 'success' } as const) : partial ? ({ status: 'Parcial', tone: 'warning' } as const) : ({ status: 'Pendência', tone: 'danger' } as const);
+
+  return [
+    { title: 'Relatório de Execução do Objeto', ...statusFrom(any((item) => Boolean(item.relatorioExecucaoItem)), any((item) => Boolean(item.relatorioExecucaoItem))) },
+    { title: 'Relatório de Execução Financeira', ...statusFrom(Boolean(prestacao?.valorGlobalExecutado || any((item) => parsePlanMoney(item.valorExecutadoItem) > 0)), any((item) => parsePlanMoney(item.valorExecutadoItem) > 0)) },
+    { title: 'Comprovantes de Despesas', ...statusFrom(all((item) => Boolean(item.notaFiscalItem || item.reciboItem)), any((item) => Boolean(item.notaFiscalItem || item.reciboItem))) },
+    { title: 'Extratos Bancários', ...statusFrom(any((item) => Boolean(item.extratoItem)), any((item) => Boolean(item.extratoItem))) },
+    { title: 'Conciliação Bancária', ...statusFrom(Boolean(record?.cadastro.dadosGerais.saldoConta), any((item) => Boolean(item.ordemBancariaItem))) },
+    { title: 'Notas e Comprovantes Fiscais', ...statusFrom(all((item) => Boolean(item.notaFiscalItem)), any((item) => Boolean(item.notaFiscalItem))) },
+    { title: 'Declaração de Guarda de Documentos', ...statusFrom(Boolean(prestacao?.observacoesFinais), false) },
+    { title: 'Parecer do Controle Interno', ...statusFrom(any((item) => Boolean(item.parecerItem)), any((item) => Boolean(item.parecerItem))) },
+  ];
+}
+
+function prestacaoRowTone(status: string, percentual: number, item: PrestacaoItemForm) {
+  const normalized = status.toLowerCase();
+  const hasDocs = Boolean(item.notaFiscalItem || item.reciboItem || item.relatorioExecucaoItem);
+  if (normalized.includes('comprov') || normalized.includes('encerr') || (percentual >= 70 && hasDocs)) return 'success';
+  if (normalized.includes('pend') || percentual === 0) return 'danger';
+  return 'warning';
+}
+
+function prestacaoRowLabel(tone: 'success' | 'warning' | 'danger') {
+  if (tone === 'success') return 'Em dia';
+  if (tone === 'warning') return 'Atenção';
+  return 'Pendente';
+}
+
+function buildPrestacaoDocumentSummary(
+  checklist: Array<{ title: string; status: 'Enviado' | 'Parcial' | 'Pendência'; tone: 'success' | 'warning' | 'danger' }>,
+) {
+  const grouped = [
+    { label: 'Relatórios', required: 3, items: checklist.slice(0, 2) },
+    { label: 'Comprovantes de Despesas', required: 8, items: checklist.slice(2, 3) },
+    { label: 'Extratos e Conciliações', required: 4, items: checklist.slice(3, 5) },
+    { label: 'Declarações e Pareceres', required: 5, items: checklist.slice(6, 8) },
+    { label: 'Outros Documentos', required: 4, items: checklist.slice(5, 6) },
+  ];
+
+  return grouped.map((group) => {
+    const score = group.items.reduce((sum, item) => sum + (item.status === 'Enviado' ? 1 : item.status === 'Parcial' ? 0.5 : 0), 0);
+    const sent = Math.min(group.required, Math.max(0, Math.round((score / Math.max(group.items.length, 1)) * group.required)));
+    const tone = group.items.some((item) => item.tone === 'danger')
+      ? 'danger'
+      : group.items.some((item) => item.tone === 'warning')
+        ? 'warning'
+        : 'success';
+    return {
+      label: group.label,
+      required: group.required,
+      sent,
+      tone,
+      status: tone === 'success' ? 'Concluído' : tone === 'warning' ? 'Parcial' : 'Pendência',
+    };
+  });
+}
+
+function buildPrestacaoPendings(
+  checklist: Array<{ title: string; status: 'Enviado' | 'Parcial' | 'Pendência'; tone: 'success' | 'warning' | 'danger' }>,
+  items: PrestacaoItemForm[],
+) {
+  const base = checklist
+    .filter((item) => item.tone !== 'success')
+    .slice(0, 3)
+    .map((item, index) => ({
+      title: item.title,
+      detail: item.status === 'Parcial' ? 'Documentação incompleta' : `${Math.max(1, items.filter((entry) => !entry.notaFiscalItem && !entry.reciboItem).length)} documento(s) pendente(s)`,
+      deadline: `${[12, 9, 7][index] ?? 5} dias`,
+    }));
+
+  return base.length
+    ? base
+    : [{ title: 'Sem pendências críticas', detail: 'Documentação principal em conformidade', deadline: 'No prazo' }];
+}
+
+function buildPrestacaoProgressLegend(
+  items: Array<{ tone: 'success' | 'warning' | 'danger'; percentual: number }>,
+  pendingDocuments: number,
+) {
+  const success = items.filter((item) => item.tone === 'success').length;
+  const warning = items.filter((item) => item.tone === 'warning').length;
+  const danger = Math.max(items.filter((item) => item.tone === 'danger').length, pendingDocuments ? 1 : 0);
+  const total = Math.max(success + warning + danger, 1);
+  const successPercent = Math.round((success / total) * 100);
+  const warningPercent = Math.round((warning / total) * 100);
+  const dangerPercent = Math.max(0, 100 - successPercent - warningPercent);
+  return [
+    { label: 'Concluído', percent: successPercent, tone: 'success' as const },
+    { label: 'Em andamento', percent: warningPercent, tone: 'warning' as const },
+    { label: 'Pendências', percent: dangerPercent, tone: 'danger' as const },
+  ];
+}
+
+function buildPrestacaoProgressDonut(items: Array<{ percent: number; tone: 'success' | 'warning' | 'danger' }>) {
+  const colors = { success: '#67c26f', warning: '#f4b63c', danger: '#e45b5b' };
+  let cursor = 0;
+  return items
+    .map((item, index) => {
+      const start = cursor;
+      const end = index === items.length - 1 ? 100 : cursor + item.percent;
+      cursor = end;
+      return `${colors[item.tone]} ${start}% ${end}%`;
+    })
+    .join(', ');
 }
 
 export default App;

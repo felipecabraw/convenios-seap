@@ -76,7 +76,7 @@ export function CadastroStepper({
             style={style}
             onClick={() => onStepChange(index)}
           >
-            <span className="cadastro-stepper__index">{String(index + 1).padStart(2, '0')}</span>
+            <span className="cadastro-stepper__index">{index + 1}</span>
             <span className="cadastro-stepper__text">
               <strong>{step.label}</strong>
               <small>
