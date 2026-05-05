@@ -38,6 +38,18 @@ const stepTones = [
     active: '#6b3240',
     active2: '#3f1b26',
   },
+  {
+    base: '#eef6f2',
+    accent: '#2c7a5c',
+    active: '#1d5a42',
+    active2: '#123728',
+  },
+  {
+    base: '#f3eef9',
+    accent: '#6a54a3',
+    active: '#4b3a7a',
+    active2: '#2f234d',
+  },
 ] as const;
 
 export function CadastroStepper({

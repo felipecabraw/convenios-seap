@@ -11,9 +11,9 @@ import {
 } from './data/stitch';
 import {
   AjustePtForm,
+  CadastroStepKey,
   cadastroOptionSets,
   GestaoInstrumentoForm,
-  PrestacaoItemForm,
   ProcessoContratacaoForm,
   ProcessoContratacaoRegistro,
   createPrestacaoItemFromPlanoItem,
@@ -39,16 +39,25 @@ import {
   buildPrestacaoMetrics,
   createDraftFromRecord,
   createRecordFromCadastro,
-  loadProcessosDatabase,
   ProcessosRecord,
   ProcessosDatabase,
   recordTitle,
-  saveProcessosDatabase,
 } from './data/processos-db';
+import {
+  buildPrestacaoChecklistEntries,
+  buildPrestacaoDocumentSummary,
+  buildPrestacaoPendings,
+  buildPrestacaoProgressDonut,
+  buildPrestacaoProgressLegend,
+  prestacaoRowLabel,
+  prestacaoRowTone,
+} from './data/prestacao-helpers';
+import { createProcessosRepository } from './data/processos-repository';
 
 const breadcrumbs: Record<ViewKey, string[]> = {
   dados: ['Processos', 'Novo Processo'],
   plano: ['Processos', 'Plano de Trabalho'],
+  financeiro: ['Processos', 'Financeiro'],
   contratacao: ['Processos', 'Processo de Contratação'],
   gestao: ['Processos', 'Gestão'],
   ajustes: ['Processos', 'Ajustes'],
@@ -65,6 +74,11 @@ const titles: Record<ViewKey, { title: string; subtitle: string; action: string 
     title: 'Plano de Trabalho',
     subtitle: 'Itens, categorias e controle do plano.',
     action: 'Novo Item',
+  },
+  financeiro: {
+    title: 'Financeiro',
+    subtitle: 'Saldos, repasses, execução e prestação financeira do instrumento.',
+    action: 'Atualizar financeiro',
   },
   contratacao: {
     title: 'Processo de Contratação',
@@ -94,11 +108,6 @@ const sidebarAccentThemes: Record<SidebarItem['key'], { accent: string; accentSo
     accentSoft: '#dbe8ff',
     accentGlow: 'rgba(47, 111, 237, 0.18)',
   },
-  'novo-processo': {
-    accent: '#d19a2b',
-    accentSoft: '#f7e1b2',
-    accentGlow: 'rgba(209, 154, 43, 0.20)',
-  },
   processos: {
     accent: '#1f9d74',
     accentSoft: '#d8f1e8',
@@ -108,11 +117,6 @@ const sidebarAccentThemes: Record<SidebarItem['key'], { accent: string; accentSo
     accent: '#d94b64',
     accentSoft: '#f7d9df',
     accentGlow: 'rgba(217, 75, 100, 0.20)',
-  },
-  configuracoes: {
-    accent: '#8b6adf',
-    accentSoft: '#e4dbfb',
-    accentGlow: 'rgba(139, 106, 223, 0.20)',
   },
 };
 
@@ -136,6 +140,26 @@ function setAppHash(hash: string | null) {
   window.history.replaceState(null, '', nextUrl);
 }
 
+function downloadTextFile(filename: string, content: string, mime = 'text/plain;charset=utf-8') {
+  if (typeof window === 'undefined') return;
+  const blob = new Blob([content], { type: mime });
+  const url = window.URL.createObjectURL(blob);
+  const anchor = document.createElement('a');
+  anchor.href = url;
+  anchor.download = filename;
+  anchor.click();
+  window.setTimeout(() => window.URL.revokeObjectURL(url), 0);
+}
+
+function escapeCsvValue(value: string | number) {
+  const normalized = String(value ?? '');
+  return /[",;\n]/.test(normalized) ? `"${normalized.replace(/"/g, '""')}"` : normalized;
+}
+
+function toCsv(headers: string[], rows: Array<Array<string | number>>) {
+  return [headers, ...rows].map((row) => row.map(escapeCsvValue).join(';')).join('\n');
+}
+
 type ViewData = {
   inventoryRows: ReturnType<typeof buildInventoryRows>;
   inventoryMetrics: ReturnType<typeof buildInventoryMetrics>;
@@ -156,12 +180,25 @@ type ViewData = {
 };
 
 function getSidebarActiveKey(view: ViewKey, isCadastroOpen: boolean) {
-  if (view === 'dados' && isCadastroOpen) return 'novo-processo';
+  if (view === 'dados' && isCadastroOpen) return 'processos';
   if (view === 'gestao') return 'painel';
-  if (view === 'ajustes') return 'configuracoes';
   if (view === 'prestacao') return 'relatorios';
   return 'processos';
 }
+
+const CADASTRO_VIEW_STEP_MAP: Partial<Record<ViewKey, CadastroStepKey>> = {
+  dados: 'dados-gerais',
+  plano: 'plano-trabalho',
+  financeiro: 'dados-financeiros',
+  contratacao: 'processo-contratacao',
+  ajustes: 'gestao-instrumento',
+  prestacao: 'prestacao-contas',
+};
+
+type CadastroOpenOptions = {
+  stepKey?: CadastroStepKey;
+  returnView?: ViewKey;
+};
 
 function buildAppData(records: ProcessosDatabase['records'], selectedRecordId: string): ViewData {
   const selectedRecord = records.find((record) => record.id === selectedRecordId) ?? records[0] ?? null;
@@ -243,11 +280,14 @@ function updateSelectedCadastroSlice<
 }
 
 function App() {
-  const [processosDb, setProcessosDb] = useState<ProcessosDatabase>(() => loadProcessosDatabase());
+  const repository = useMemo(() => createProcessosRepository(), []);
+  const [processosDb, setProcessosDb] = useState<ProcessosDatabase>(() => repository.load());
   const [activeView, setActiveView] = useState<ViewKey>('gestao');
   const [isCadastroOpen, setIsCadastroOpen] = useState(false);
   const [editingRecordId, setEditingRecordId] = useState<string | null>(null);
   const [viewingRecordId, setViewingRecordId] = useState<string | null>(null);
+  const [cadastroInitialStepKey, setCadastroInitialStepKey] = useState<CadastroStepKey>('dados-gerais');
+  const [cadastroReturnView, setCadastroReturnView] = useState<ViewKey>('dados');
   const selectedRecord = useMemo(
     () => processosDb.records.find((record) => record.id === processosDb.selectedRecordId) ?? processosDb.records[0] ?? null,
     [processosDb],
@@ -270,11 +310,11 @@ function App() {
     sidebarItems.find((item) => item.key === activeSidebarKey)?.label ?? titles[activeView].title;
 
   useEffect(() => {
-    saveProcessosDatabase({
+    repository.save({
       ...processosDb,
       lastSyncAt: new Date().toISOString(),
     });
-  }, [processosDb]);
+  }, [processosDb, repository]);
 
   useEffect(() => {
     const syncPrestacaoHash = () => {
@@ -330,14 +370,18 @@ function App() {
   }
 
   function handleOpenCadastro() {
-    handleOpenCadastroForRecord(null);
+    handleOpenCadastroForRecord(null, { stepKey: 'dados-gerais', returnView: 'dados' });
   }
 
-  function handleOpenCadastroForRecord(recordId: string | null) {
+  function handleOpenCadastroForRecord(recordId: string | null, options?: CadastroOpenOptions) {
+    const nextReturnView = options?.returnView ?? 'dados';
+    const nextStepKey = options?.stepKey ?? CADASTRO_VIEW_STEP_MAP[nextReturnView] ?? 'dados-gerais';
     startTransition(() => {
       setActiveView('dados');
       setIsCadastroOpen(true);
       setEditingRecordId(recordId);
+      setCadastroInitialStepKey(nextStepKey);
+      setCadastroReturnView(nextReturnView);
       if (recordId) {
         setProcessosDb((current) => ({
           ...current,
@@ -442,6 +486,11 @@ function App() {
 
   function handleOpenFinanceiro(recordId: string) {
     handleSelectRecord(recordId);
+    handleNavigate('financeiro');
+  }
+
+  function handleOpenPrestacao(recordId: string) {
+    handleSelectRecord(recordId);
     handleNavigate('prestacao');
   }
 
@@ -480,7 +529,7 @@ function App() {
     });
     setIsCadastroOpen(false);
     setEditingRecordId(null);
-    setActiveView('dados');
+    setActiveView(cadastroReturnView);
   }
 
   return (
@@ -521,11 +570,7 @@ function App() {
                 <span className="material-symbols-outlined">{item.icon}</span>
               </span>
               <span>
-                {item.key === 'relatorios'
-                  ? 'Prestação de Contas'
-                  : item.key === 'configuracoes'
-                    ? 'Configurações'
-                : item.label}
+                {item.key === 'relatorios' ? 'Prestação de Contas' : item.label}
               </span>
             </button>
               );
@@ -581,8 +626,9 @@ function App() {
               onCancel={() => {
                 setIsCadastroOpen(false);
                 setEditingRecordId(null);
-                setActiveView('dados');
+                setActiveView(cadastroReturnView);
               }}
+              initialStepKey={cadastroInitialStepKey}
               initialData={editingRecord ? createDraftFromRecord(editingRecord) : undefined}
             />
           ) : (
@@ -595,6 +641,7 @@ function App() {
               selectedRecord,
               handleOpenCadastroForRecord,
               handleOpenFinanceiro,
+              handleOpenPrestacao,
               handleOpenPlano,
               handleOpenContratacao,
               handleViewRecord,
@@ -622,8 +669,9 @@ function renderView(
   data: ViewData,
   records: ProcessosRecord[],
   selectedRecord: ProcessosRecord | null,
-  onOpenCadastroForRecord: (recordId: string) => void,
+  onOpenCadastroForRecord: (recordId: string | null, options?: CadastroOpenOptions) => void,
   onOpenFinanceiro: (recordId: string) => void,
+  onOpenPrestacao: (recordId: string) => void,
   onOpenPlano: (recordId: string) => void,
   onOpenContratacao: (recordId: string) => void,
   onViewRecord: (recordId: string) => void,
@@ -647,6 +695,7 @@ function renderView(
           selectedRecordId={selectedRecord?.id ?? ''}
           onOpenCadastroForRecord={onOpenCadastroForRecord}
           onOpenFinanceiro={onOpenFinanceiro}
+          onOpenPrestacao={onOpenPrestacao}
           onOpenPlano={onOpenPlano}
           onOpenContratacao={onOpenContratacao}
           onViewRecord={onViewRecord}
@@ -654,7 +703,27 @@ function renderView(
         />
       );
     case 'plano':
-      return <PlanView breadcrumb={breadcrumb} title={title} rows={data.planRows} record={selectedRecord} />;
+      return (
+        <PlanView
+          breadcrumb={breadcrumb}
+          title={title}
+          rows={data.planRows}
+          record={selectedRecord}
+          onOpenCadastroForRecord={onOpenCadastroForRecord}
+          onOpenContratacao={onOpenContratacao}
+        />
+      );
+    case 'financeiro':
+      return (
+        <FinancialView
+          breadcrumb={breadcrumb}
+          title={title}
+          record={selectedRecord}
+          onBack={onBackToDados}
+          onOpenPrestacao={onOpenPrestacao}
+          onOpenCadastroForRecord={onOpenCadastroForRecord}
+        />
+      );
     case 'contratacao':
       return (
         <ContractView
@@ -663,6 +732,7 @@ function renderView(
           record={selectedRecord}
           documents={data.contractDocuments}
           parties={data.contractParties}
+          onOpenPlano={onOpenPlano}
           onDraftChange={onContratacaoDraftChange}
           onDraftReplace={onContratacaoDraftReplace}
           onRecordsChange={onContratacaoRecordsChange}
@@ -676,6 +746,11 @@ function renderView(
           dashboardUpdatedAt={dashboardUpdatedAt}
           records={records}
           record={selectedRecord}
+          onOpenCadastroForRecord={onOpenCadastroForRecord}
+          onOpenDados={onBackToDados}
+          onOpenFinanceiro={onOpenFinanceiro}
+          onOpenPrestacao={onOpenPrestacao}
+          onOpenAjustes={(recordId) => onOpenCadastroForRecord(recordId, { stepKey: 'gestao-instrumento', returnView: 'ajustes' })}
           onGestaoChange={onGestaoChange}
         />
       );
@@ -688,6 +763,8 @@ function renderView(
           title={title}
           record={selectedRecord}
           onBack={onBackToDados}
+          onOpenFinanceiro={onOpenFinanceiro}
+          onOpenCadastroForRecord={onOpenCadastroForRecord}
         />
       );
     default:
@@ -742,6 +819,7 @@ function InventoryView({
   selectedRecordId,
   onOpenCadastroForRecord,
   onOpenFinanceiro,
+  onOpenPrestacao,
   onOpenPlano,
   onOpenContratacao,
   onViewRecord,
@@ -752,8 +830,9 @@ function InventoryView({
   records: ProcessosRecord[];
   rows: ViewData['inventoryRows'];
   selectedRecordId: string;
-  onOpenCadastroForRecord: (recordId: string) => void;
+  onOpenCadastroForRecord: (recordId: string | null, options?: CadastroOpenOptions) => void;
   onOpenFinanceiro: (recordId: string) => void;
+  onOpenPrestacao: (recordId: string) => void;
   onOpenPlano: (recordId: string) => void;
   onOpenContratacao: (recordId: string) => void;
   onViewRecord: (recordId: string) => void;
@@ -763,6 +842,8 @@ function InventoryView({
   const [instrumentFilter, setInstrumentFilter] = useState('Todos os instrumentos');
   const [statusFilter, setStatusFilter] = useState('Todos os status');
   const [sectorFilter, setSectorFilter] = useState('Todas as unidades');
+  const [sortOrder, setSortOrder] = useState<'Mais recentes' | 'Vigência mais próxima' | 'Maior valor'>('Mais recentes');
+  const [pageSize, setPageSize] = useState(10);
   const normalizedQuery = query.trim().toLowerCase();
   const rowById = useMemo(() => new Map(rows.map((row) => [row.id, row])), [rows]);
   const instrumentOptions = useMemo(
@@ -811,12 +892,28 @@ function InventoryView({
       }),
     [instrumentFilter, normalizedQuery, records, sectorFilter, statusFilter],
   );
-  const visibleRows = useMemo(
-    () => filteredRecords.map((record) => rowById.get(record.id)).filter((row): row is ViewData['inventoryRows'][number] => Boolean(row)),
-    [filteredRecords, rowById],
-  );
+  const visibleRows = useMemo(() => {
+    const mapped = filteredRecords
+      .map((record) => ({ record, row: rowById.get(record.id) }))
+      .filter((entry): entry is { record: ProcessosRecord; row: ViewData['inventoryRows'][number] } => Boolean(entry.row));
+
+    mapped.sort((left, right) => {
+      if (sortOrder === 'Maior valor') {
+        return parsePlanMoney(right.row.amount) - parsePlanMoney(left.row.amount);
+      }
+
+      if (sortOrder === 'Vigência mais próxima') {
+        const leftTime = new Date(left.record.cadastro.dadosGerais.vigenciaFinal || left.record.cadastro.dadosGerais.prazoValidade || '9999-12-31').getTime();
+        const rightTime = new Date(right.record.cadastro.dadosGerais.vigenciaFinal || right.record.cadastro.dadosGerais.prazoValidade || '9999-12-31').getTime();
+        return leftTime - rightTime;
+      }
+
+      return new Date(right.record.updatedAt).getTime() - new Date(left.record.updatedAt).getTime();
+    });
+
+    return mapped.map((entry) => entry.row);
+  }, [filteredRecords, rowById, sortOrder]);
   const totalRows = rows.length;
-  const pageSize = 10;
   const totalPages = Math.max(1, Math.ceil(visibleRows.length / pageSize));
   const [currentPage, setCurrentPage] = useState(1);
   const startIndex = (currentPage - 1) * pageSize;
@@ -849,20 +946,14 @@ function InventoryView({
           <p>Consulte e gerencie os processos de convênios, termos e instrumentos cadastrados no sistema.</p>
         </div>
         <div className="inventory-reference-toolbar">
-          <button type="button" className="inventory-ref-control">
+          <span className="inventory-ref-control">
             <span className="material-symbols-outlined" aria-hidden="true">calendar_month</span>
-            2025
-            <span className="material-symbols-outlined" aria-hidden="true">expand_more</span>
-          </button>
-          <button type="button" className="inventory-ref-control">
-            <span className="material-symbols-outlined" aria-hidden="true">attach_money</span>
-            Todos os órgãos
-            <span className="material-symbols-outlined" aria-hidden="true">expand_more</span>
-          </button>
-          <button type="button" className="inventory-ref-bell" aria-label="Notificações">
-            <span className="material-symbols-outlined" aria-hidden="true">notifications</span>
-            <strong>10</strong>
-          </button>
+            Acervo institucional
+          </span>
+          <span className="inventory-ref-control">
+            <span className="material-symbols-outlined" aria-hidden="true">account_balance</span>
+            Gestão integrada
+          </span>
           <span className="inventory-ref-avatar">FC</span>
         </div>
       </header>
@@ -892,11 +983,6 @@ function InventoryView({
                 {sectorOptions.map((option) => <option key={option} value={option}>{option.replace('Todas as unidades', 'Todas')}</option>)}
               </select>
             </label>
-            <button type="button" className="inventory-ref-filter-button">
-              <span className="material-symbols-outlined" aria-hidden="true">filter_list</span>
-              Mais filtros
-              <span className="material-symbols-outlined" aria-hidden="true">expand_more</span>
-            </button>
             <button
               type="button"
               className="inventory-ref-clear"
@@ -910,7 +996,7 @@ function InventoryView({
               <span className="material-symbols-outlined" aria-hidden="true">refresh</span>
               Limpar filtros
             </button>
-            <button type="button" className="inventory-ref-new" onClick={() => onOpenCadastroForRecord('')}>
+            <button type="button" className="inventory-ref-new" onClick={() => onOpenCadastroForRecord(null, { stepKey: 'dados-gerais', returnView: 'dados' })}>
               <span className="material-symbols-outlined" aria-hidden="true">add</span>
               Novo processo
             </button>
@@ -933,8 +1019,8 @@ function InventoryView({
             <div className="inventory-reference-table-head">
               <strong>{visibleCount} processos encontrados</strong>
               <div>
-                <label>Exibir <select value={pageSize} disabled><option>{pageSize}</option></select></label>
-                <label>Ordenar por <select disabled><option>Mais recentes</option></select></label>
+                <label>Exibir <select value={pageSize} onChange={(event) => setPageSize(Number(event.target.value))}><option value={10}>10</option><option value={20}>20</option><option value={50}>50</option></select></label>
+                <label>Ordenar por <select value={sortOrder} onChange={(event) => setSortOrder(event.target.value as typeof sortOrder)}><option>Mais recentes</option><option>Vigência mais próxima</option><option>Maior valor</option></select></label>
               </div>
             </div>
 
@@ -959,7 +1045,7 @@ function InventoryView({
                     const dados = record?.cadastro.dadosGerais;
                     return (
                       <tr key={row.id} className={row.id === selectedRecord?.id ? 'is-selected' : ''} onClick={() => onSelectRecord(row.id)}>
-                        <td><button type="button" className="inventory-ref-star" aria-label="Favoritar processo"><span className="material-symbols-outlined" aria-hidden="true">star</span></button></td>
+                        <td><button type="button" className="inventory-ref-star" aria-label="Abrir resumo do processo" onClick={(event) => { event.stopPropagation(); onViewRecord(row.id); }}><span className="material-symbols-outlined" aria-hidden="true">visibility</span></button></td>
                         <td><strong className="inventory-ref-process">{row.ref}</strong><small>{row.title}</small></td>
                         <td><span>{dados?.modalidade || row.title}</span><small>{dados?.numeroInstrumento || row.subtitle}</small></td>
                         <td><span>SEAP</span><small>{row.subtitle}</small></td>
@@ -969,10 +1055,10 @@ function InventoryView({
                         <td>{row.due}</td>
                         <td>
                           <div className="inventory-reference-actions" onClick={(event) => event.stopPropagation()}>
-                            <button type="button" onClick={() => onOpenCadastroForRecord(row.id)} aria-label="Editar"><span className="material-symbols-outlined" aria-hidden="true">edit</span></button>
+                            <button type="button" onClick={() => onOpenCadastroForRecord(row.id, { stepKey: 'dados-gerais', returnView: 'dados' })} aria-label="Editar"><span className="material-symbols-outlined" aria-hidden="true">edit</span></button>
                             <button type="button" onClick={() => onViewRecord(row.id)} aria-label="Resumo"><span className="material-symbols-outlined" aria-hidden="true">article</span></button>
                             <button type="button" onClick={() => onOpenContratacao(row.id)} aria-label="Contratações"><span className="material-symbols-outlined" aria-hidden="true">shopping_cart</span></button>
-                            <button type="button" onClick={() => onOpenFinanceiro(row.id)} aria-label="Prestação"><span className="material-symbols-outlined" aria-hidden="true">attach_money</span></button>
+                            <button type="button" onClick={() => onOpenFinanceiro(row.id)} aria-label="Financeiro"><span className="material-symbols-outlined" aria-hidden="true">attach_money</span></button>
                           </div>
                         </td>
                       </tr>
@@ -1012,19 +1098,17 @@ function InventoryView({
 
         {selectedRecord && selectedRow ? (
           <aside className="inventory-reference-detail">
-            <button type="button" className="inventory-reference-detail__close" aria-label="Fechar painel">
-              <span className="material-symbols-outlined" aria-hidden="true">close</span>
-            </button>
             <span className="inventory-reference-chip">{selectedRecord.cadastro.dadosGerais.modalidade || 'Convênio'}</span>
             <h3>{selectedRow.ref}</h3>
             <p>{selectedRow.title}</p>
             <span className={`inventory-ref-status inventory-ref-status--${selectedRow.statusTone}`}>{selectedRow.status}</span>
 
             <nav className="inventory-reference-tabs" aria-label="Abas do processo">
-              <button type="button" className="is-active"><span className="material-symbols-outlined" aria-hidden="true">explore</span>Resumo</button>
+              <span className="is-active"><span className="material-symbols-outlined" aria-hidden="true">explore</span>Resumo</span>
               <button type="button" onClick={() => onOpenPlano(selectedRecord.id)}><span className="material-symbols-outlined" aria-hidden="true">article</span>Plano</button>
               <button type="button" onClick={() => onOpenContratacao(selectedRecord.id)}><span className="material-symbols-outlined" aria-hidden="true">event_note</span>Contratações</button>
-              <button type="button" onClick={() => onOpenFinanceiro(selectedRecord.id)}><span className="material-symbols-outlined" aria-hidden="true">request_quote</span>Prestação</button>
+              <button type="button" onClick={() => onOpenFinanceiro(selectedRecord.id)}><span className="material-symbols-outlined" aria-hidden="true">request_quote</span>Financeiro</button>
+              <button type="button" onClick={() => onOpenPrestacao(selectedRecord.id)}><span className="material-symbols-outlined" aria-hidden="true">fact_check</span>Prestação</button>
             </nav>
 
             <section className="inventory-reference-detail__section">
@@ -1049,10 +1133,11 @@ function InventoryView({
             </section>
 
             <div className="inventory-reference-detail__actions">
-              <button type="button" onClick={() => onOpenCadastroForRecord(selectedRecord.id)}><span className="material-symbols-outlined" aria-hidden="true">edit</span>Editar</button>
+              <button type="button" onClick={() => onOpenCadastroForRecord(selectedRecord.id, { stepKey: 'dados-gerais', returnView: 'dados' })}><span className="material-symbols-outlined" aria-hidden="true">edit</span>Editar</button>
               <button type="button" onClick={() => onOpenPlano(selectedRecord.id)}><span className="material-symbols-outlined" aria-hidden="true">event_note</span>Plano de Trabalho</button>
               <button type="button" onClick={() => onOpenContratacao(selectedRecord.id)}><span className="material-symbols-outlined" aria-hidden="true">shopping_cart</span>Contratações</button>
-              <button type="button" onClick={() => onOpenFinanceiro(selectedRecord.id)}><span className="material-symbols-outlined" aria-hidden="true">attach_money</span>Prestação de Contas</button>
+              <button type="button" onClick={() => onOpenFinanceiro(selectedRecord.id)}><span className="material-symbols-outlined" aria-hidden="true">attach_money</span>Financeiro</button>
+              <button type="button" onClick={() => onOpenPrestacao(selectedRecord.id)}><span className="material-symbols-outlined" aria-hidden="true">fact_check</span>Prestação de Contas</button>
             </div>
           </aside>
         ) : null}
@@ -1066,30 +1151,50 @@ function PlanView({
   title,
   rows,
   record,
+  onOpenCadastroForRecord,
+  onOpenContratacao,
 }: {
   breadcrumb: string[];
   title: { title: string; subtitle: string; action: string };
   rows: ViewData['planRows'];
   record: ProcessosRecord | null;
+  onOpenCadastroForRecord: (recordId: string, options?: CadastroOpenOptions) => void;
+  onOpenContratacao: (recordId: string) => void;
 }) {
   const [searchQuery, setSearchQuery] = useState('');
+  const [isAdvancedFiltersOpen, setIsAdvancedFiltersOpen] = useState(false);
+  const [statusFilter, setStatusFilter] = useState('Todos');
+  const [linkFilter, setLinkFilter] = useState('Todos');
+  const [selectedItemId, setSelectedItemId] = useState<string | null>(rows[0]?.id ?? null);
   const currencyFormatter = new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' });
   const percentFormatter = new Intl.NumberFormat('pt-BR', { minimumFractionDigits: 1, maximumFractionDigits: 1 });
   const summary = record ? buildProcessoConsolidatedSummary(record) : null;
   const normalizedSearch = searchQuery.trim().toLowerCase();
-  const filteredRows = normalizedSearch
-    ? rows.filter((row) =>
-        [row.category, row.item, row.document, row.tag, row.unit]
-          .join(' ')
-          .toLowerCase()
-          .includes(normalizedSearch),
-      )
-    : rows;
+  const filteredRows = rows.filter((row) => {
+    const matchesSearch =
+      !normalizedSearch ||
+      [
+        row.category,
+        row.item,
+        row.document,
+        row.tag,
+        row.unit,
+        row.linkedSummary,
+        row.status,
+      ]
+        .join(' ')
+        .toLowerCase()
+        .includes(normalizedSearch);
+    const matchesStatus = statusFilter === 'Todos' || row.status === statusFilter;
+    const matchesLink = linkFilter === 'Todos' || (linkFilter === 'Com vínculo' ? row.linkedContractsCount > 0 : row.linkedContractsCount === 0);
+    return matchesSearch && matchesStatus && matchesLink;
+  });
+  const selectedPlanRow = filteredRows.find((row) => row.id === selectedItemId) ?? filteredRows[0] ?? null;
   const totalPlan = rows.reduce((sum, row) => sum + parsePlanMoney(row.totalValue), 0);
   const executedValue = summary?.valorTotalPago ?? 0;
   const remainingValue = Math.max(totalPlan - executedValue, 0);
   const executionPercent = totalPlan > 0 ? Math.min(100, (executedValue / totalPlan) * 100) : 0;
-  const completedItems = rows.filter((row) => row.monitored === 'Sim').length;
+  const completedItems = rows.filter((row) => row.status === 'Executado' || row.status === 'Totalmente contratado').length;
   const categoryTotals = rows.reduce<Record<string, number>>((acc, row) => {
     const category = row.category || 'Outros';
     acc[category] = (acc[category] ?? 0) + parsePlanMoney(row.totalValue);
@@ -1109,6 +1214,30 @@ function PlanView({
   const startDate = record?.cadastro.dadosGerais.vigenciaInicial || '15/03/2024';
   const endDate = record?.cadastro.dadosGerais.vigenciaFinal || '14/03/2026';
   const status = record?.cadastro.dadosGerais.status || 'Em execução';
+
+  useEffect(() => {
+    if (!filteredRows.some((row) => row.id === selectedItemId)) {
+      setSelectedItemId(filteredRows[0]?.id ?? null);
+    }
+  }, [filteredRows, selectedItemId]);
+
+  function exportPlanRows() {
+    if (!record) return;
+    const csv = toCsv(
+      ['Categoria', 'Item', 'Quantidade', 'Valor total', 'Contratado', 'Saldo', 'SEI/Contratações', 'Status'],
+      filteredRows.map((row) => [
+        row.category,
+        row.item,
+        `${row.quantity} ${row.unit}`,
+        row.totalValue,
+        row.contractedValueFormatted,
+        row.remainingValueFormatted,
+        row.linkedSummary,
+        row.status,
+      ]),
+    );
+    downloadTextFile(`plano-trabalho-${record.cadastro.dadosGerais.numeroInternoSeap || record.id}.csv`, csv, 'text/csv;charset=utf-8');
+  }
 
   return (
     <section className="view plan-work-view">
@@ -1135,16 +1264,16 @@ function PlanView({
             <p>Visualize, gerencie e acompanhe os itens e metas do plano de trabalho do instrumento.</p>
           </div>
           <div className="plan-work-actions">
-            <button type="button" className="plan-work-button">
-              <span className="material-symbols-outlined" aria-hidden="true">history</span>
-              Histórico de versões
-            </button>
-            <button type="button" className="plan-work-button">
+            <button type="button" className="plan-work-button" onClick={exportPlanRows} disabled={!filteredRows.length}>
               <span className="material-symbols-outlined" aria-hidden="true">download</span>
               Exportar
-              <span className="material-symbols-outlined" aria-hidden="true">expand_more</span>
             </button>
-            <button type="button" className="plan-work-button plan-work-button--primary">
+            <button
+              type="button"
+              className="plan-work-button plan-work-button--primary"
+              onClick={() => record && onOpenCadastroForRecord(record.id, { stepKey: 'plano-trabalho', returnView: 'plano' })}
+              disabled={!record}
+            >
               <span className="material-symbols-outlined" aria-hidden="true">add</span>
               Novo item
             </button>
@@ -1201,7 +1330,7 @@ function PlanView({
           <div className="plan-work-table-card__head">
             <h3>Itens do Plano de Trabalho</h3>
             <div className="plan-work-table-tools">
-              <button type="button" className="plan-work-button plan-work-button--compact">
+              <button type="button" className="plan-work-button plan-work-button--compact" onClick={() => setIsAdvancedFiltersOpen((value) => !value)}>
                 <span className="material-symbols-outlined" aria-hidden="true">filter_alt</span>
                 Filtros
               </button>
@@ -1217,6 +1346,29 @@ function PlanView({
             </div>
           </div>
 
+          {isAdvancedFiltersOpen ? (
+            <div className="plan-work-inline-filters">
+              <label className="plan-work-inline-filter">
+                <span>Status</span>
+                <select value={statusFilter} onChange={(event) => setStatusFilter(event.target.value)}>
+                  <option>Todos</option>
+                  <option>Sem contratação</option>
+                  <option>Parcialmente contratado</option>
+                  <option>Totalmente contratado</option>
+                  <option>Executado</option>
+                </select>
+              </label>
+              <label className="plan-work-inline-filter">
+                <span>Vínculo</span>
+                <select value={linkFilter} onChange={(event) => setLinkFilter(event.target.value)}>
+                  <option>Todos</option>
+                  <option>Com vínculo</option>
+                  <option>Sem vínculo</option>
+                </select>
+              </label>
+            </div>
+          ) : null}
+
           <div className="plan-work-table-wrap">
             <table className="plan-work-table">
               <thead>
@@ -1224,33 +1376,47 @@ function PlanView({
                   <th>Categoria/Objeto</th>
                   <th>Item</th>
                   <th>Quant.</th>
-                  <th>V. Unitário</th>
                   <th>V. Total</th>
-                  <th>Monitorado</th>
-                  <th>Documento</th>
+                  <th>Contratado</th>
+                  <th>Saldo</th>
+                  <th>Contratações / SEI</th>
+                  <th>Status</th>
                   <th>Ações</th>
                 </tr>
               </thead>
               <tbody>
                 {filteredRows.map((row, index) => (
-                  <tr key={`${row.document}-${index}`}>
+                  <tr key={`${row.document}-${index}`} className={selectedPlanRow?.id === row.id ? 'is-selected' : undefined}>
                     <td><span className={`plan-work-category ${planCategoryClass(row.category)}`}>{row.category}</span></td>
                     <td>
                       <div className="plan-work-item-cell">
-                        <span>{String(index + 1).padStart(2, '0')}</span>
+                        <span>{row.order}</span>
                         <strong>{row.item}</strong>
+                        <small>{row.document}</small>
                       </div>
                     </td>
-                    <td>{row.quantity}</td>
-                    <td>{row.unitValue}</td>
+                    <td>{row.quantity} {row.unit}</td>
                     <td>{row.totalValue}</td>
-                    <td><span className={row.monitored === 'Sim' ? 'plan-work-status is-yes' : 'plan-work-status is-no'}>{String(row.monitored)}</span></td>
-                    <td><a className="plan-work-doc" href="#documento">{row.document}</a></td>
+                    <td>{row.contractedValueFormatted}</td>
+                    <td className={row.remainingValue > 0 ? 'is-saldo-open' : 'is-saldo-closed'}>{row.remainingValueFormatted}</td>
+                    <td>
+                      <div className="plan-work-contract-links">
+                        <strong>{row.linkedContractsCount}</strong>
+                        <span className={row.linkedContractsCount ? 'plan-work-contract-chip' : 'plan-work-contract-chip is-muted'}>{row.linkedSummary}</span>
+                      </div>
+                    </td>
+                    <td><span className={`plan-work-status ${row.statusTone}`}>{row.status}</span></td>
                     <td>
                       <div className="plan-work-row-actions">
-                        <button type="button" aria-label="Visualizar item"><span className="material-symbols-outlined" aria-hidden="true">visibility</span></button>
-                        <button type="button" aria-label="Editar item"><span className="material-symbols-outlined" aria-hidden="true">edit</span></button>
-                        <button type="button" aria-label="Mais ações"><span className="material-symbols-outlined" aria-hidden="true">more_vert</span></button>
+                        <button type="button" aria-label="Visualizar item" onClick={() => { setSelectedItemId(row.id); document.getElementById('plan-work-history-card')?.scrollIntoView({ behavior: 'smooth', block: 'start' }); }}><span className="material-symbols-outlined" aria-hidden="true">visibility</span></button>
+                        <button
+                          type="button"
+                          aria-label="Editar item"
+                          onClick={() => record && onOpenCadastroForRecord(record.id, { stepKey: 'plano-trabalho', returnView: 'plano' })}
+                        >
+                          <span className="material-symbols-outlined" aria-hidden="true">edit</span>
+                        </button>
+                        <button type="button" aria-label="Mais ações" onClick={() => record && onOpenContratacao(record.id)}><span className="material-symbols-outlined" aria-hidden="true">shopping_cart</span></button>
                       </div>
                     </td>
                   </tr>
@@ -1304,16 +1470,25 @@ function PlanView({
             <dl className="plan-work-indicators">
               <div><dt>Avanço físico (percentual)</dt><dd className="is-success">{percentFormatter.format(executionPercent)}%</dd></div>
               <div><dt>Itens concluídos</dt><dd>{completedItems} de {rows.length}</dd></div>
-              <div><dt>Itens em execução</dt><dd>{Math.max(rows.length - completedItems, 0)}</dd></div>
-              <div><dt>Itens não iniciados</dt><dd>{rows.filter((row) => row.monitored !== 'Sim').length}</dd></div>
-              <div><dt>Acompanhamentos realizados</dt><dd>{Math.max(completedItems + 2, 0)}</dd></div>
+              <div><dt>Itens com vínculo</dt><dd>{rows.filter((row) => row.linkedContractsCount > 0).length}</dd></div>
+              <div><dt>Itens sem contratação</dt><dd>{rows.filter((row) => row.linkedContractsCount === 0).length}</dd></div>
+              <div><dt>Contratações vinculadas</dt><dd>{summary?.totalContratacoes ?? 0}</dd></div>
             </dl>
           </article>
 
-          <article className="plan-work-side-card">
-            <h3>Observações</h3>
-            <p>A execução dos itens está sendo realizada conforme cronograma previsto. Próxima avaliação em 30/05/2025.</p>
-            <p><strong>Responsável:</strong> Felipe Cabral<br /><strong>Atualizado em:</strong> {record ? formatDashboardUpdatedAt(record.updatedAt) : '20/05/2025 09:30'}</p>
+          <article id="plan-work-history-card" className="plan-work-side-card">
+            <h3>Histórico do item {selectedPlanRow?.order ?? '--'}</h3>
+            {selectedPlanRow ? (
+              <>
+                <p><strong>{selectedPlanRow.item}</strong></p>
+                <p>{selectedPlanRow.document}</p>
+                <p><strong>Status operacional:</strong> {selectedPlanRow.status}</p>
+                <p><strong>Contratações vinculadas:</strong> {selectedPlanRow.linkedSummary}</p>
+                <p><strong>Atualizado em:</strong> {record ? formatDashboardUpdatedAt(record.updatedAt) : 'A definir'}</p>
+              </>
+            ) : (
+              <p>Selecione um item para ver o histórico operacional consolidado.</p>
+            )}
           </article>
         </aside>
       </section>
@@ -1361,6 +1536,7 @@ function ContractView({
   record,
   documents,
   parties,
+  onOpenPlano,
   onDraftChange,
   onDraftReplace,
   onRecordsChange,
@@ -1370,6 +1546,7 @@ function ContractView({
   record: ProcessosRecord | null;
   documents: ViewData['contractDocuments'];
   parties: ViewData['contractParties'];
+  onOpenPlano: (recordId: string) => void;
   onDraftChange: <K extends keyof ProcessoContratacaoForm>(field: K, value: ProcessoContratacaoForm[K]) => void;
   onDraftReplace: (draft: ProcessoContratacaoForm) => void;
   onRecordsChange: (records: ProcessoContratacaoRegistro[]) => void;
@@ -1391,6 +1568,12 @@ function ContractView({
           </div>
           <h2>{title.title}</h2>
         </div>
+        {record ? (
+          <button type="button" className="button button--secondary" onClick={() => onOpenPlano(record.id)}>
+            <span className="material-symbols-outlined">schema</span>
+            Ir para plano
+          </button>
+        ) : null}
       </header>
 
       {record ? (
@@ -1502,6 +1685,11 @@ function ManagementView({
   dashboardUpdatedAt,
   records,
   record,
+  onOpenCadastroForRecord,
+  onOpenDados,
+  onOpenFinanceiro,
+  onOpenPrestacao,
+  onOpenAjustes,
   onGestaoChange,
 }: {
   breadcrumb: string[];
@@ -1509,6 +1697,11 @@ function ManagementView({
   dashboardUpdatedAt: string;
   records: ProcessosRecord[];
   record: ProcessosRecord | null;
+  onOpenCadastroForRecord: (recordId: string | null, options?: CadastroOpenOptions) => void;
+  onOpenDados: () => void;
+  onOpenFinanceiro: (recordId: string) => void;
+  onOpenPrestacao: (recordId: string) => void;
+  onOpenAjustes: (recordId: string) => void;
   onGestaoChange: <K extends keyof GestaoInstrumentoForm>(field: K, value: GestaoInstrumentoForm[K]) => void;
 }) {
   const [sectorFilter, setSectorFilter] = useState('Todas as unidades');
@@ -1634,15 +1827,12 @@ function ManagementView({
             ))}
           </div>
           <div className="dashboard-toolbar" aria-label="Filtros do painel">
-            <button type="button" className="dashboard-toolbar__control">
+            <span className="dashboard-toolbar__control">
               <span className="material-symbols-outlined" aria-hidden="true">
                 calendar_month
               </span>
-              2026
-              <span className="material-symbols-outlined" aria-hidden="true">
-                expand_more
-              </span>
-            </button>
+              Todos
+            </span>
             <label className="dashboard-toolbar__control dashboard-toolbar__control--select">
               <span className="material-symbols-outlined" aria-hidden="true">
                 account_balance
@@ -1659,12 +1849,6 @@ function ManagementView({
                 expand_more
               </span>
             </label>
-            <button type="button" className="dashboard-toolbar__icon" aria-label="Notificações">
-              <span className="material-symbols-outlined" aria-hidden="true">
-                notifications
-              </span>
-              <strong>{alerts.length}</strong>
-            </button>
           </div>
         </div>
         <div className="dashboard-head__row">
@@ -1714,7 +1898,7 @@ function ManagementView({
               </div>
             )) : <div className="dashboard-reference-empty">Nenhum processo encontrado para a unidade selecionada.</div>}
           </div>
-          <button type="button" className="dashboard-reference-link">
+          <button type="button" className="dashboard-reference-link" onClick={onOpenDados}>
             Ver todas as vigências
           </button>
         </article>
@@ -1754,7 +1938,7 @@ function ManagementView({
               ))}
             </div>
           </div>
-          <button type="button" className="dashboard-reference-link">
+          <button type="button" className="dashboard-reference-link" onClick={() => record && onOpenFinanceiro(record.id)} disabled={!record}>
             Ver relatório financeiro
           </button>
         </article>
@@ -1794,7 +1978,7 @@ function ManagementView({
               ))}
             </div>
           </div>
-          <button type="button" className="dashboard-reference-link">
+          <button type="button" className="dashboard-reference-link" onClick={() => record && onOpenPrestacao(record.id)} disabled={!record}>
             Ver todas as prestações
           </button>
         </article>
@@ -1845,7 +2029,7 @@ function ManagementView({
                 </tbody>
               </table>
             </div>
-          <button type="button" className="dashboard-reference-link dashboard-reference-link--table">
+          <button type="button" className="dashboard-reference-link dashboard-reference-link--table" onClick={onOpenDados}>
             Ver todos os processos
           </button>
         </article>
@@ -1871,7 +2055,7 @@ function ManagementView({
                 </div>
               ))}
             </div>
-            <button type="button" className="dashboard-reference-link">
+            <button type="button" className="dashboard-reference-link" onClick={() => record && onOpenAjustes(record.id)} disabled={!record}>
               Ver todos os alertas
             </button>
           </article>
@@ -1880,12 +2064,12 @@ function ManagementView({
             <h3>Ações rápidas</h3>
             <div className="dashboard-quick-actions">
               {[
-                ['note_add', 'Novo Convênio'],
-                ['handshake', 'Novo Instrumento'],
-                ['fact_check', 'Nova Prestação de Contas'],
-                ['report', 'Registrar Risco'],
-              ].map(([icon, label]) => (
-                <button key={label} type="button" className="dashboard-quick-action">
+                { icon: 'note_add', label: 'Novo Convênio', action: () => onOpenCadastroForRecord(null, { stepKey: 'dados-gerais', returnView: 'dados' }), disabled: false },
+                { icon: 'handshake', label: 'Novo Instrumento', action: () => onOpenCadastroForRecord(null, { stepKey: 'dados-gerais', returnView: 'dados' }), disabled: false },
+                { icon: 'fact_check', label: 'Nova Prestação de Contas', action: () => record && onOpenPrestacao(record.id), disabled: !record },
+                { icon: 'report', label: 'Registrar Risco', action: () => record && onOpenAjustes(record.id), disabled: !record },
+              ].map(({ icon, label, action, disabled }) => (
+                <button key={label} type="button" className="dashboard-quick-action" onClick={action} disabled={disabled}>
                   <span className="material-symbols-outlined" aria-hidden="true">
                     {icon}
                   </span>
@@ -2210,11 +2394,15 @@ function PrestacaoView({
   title,
   record,
   onBack,
+  onOpenFinanceiro,
+  onOpenCadastroForRecord,
 }: {
   breadcrumb: string[]; 
   title: { title: string; subtitle: string; action: string };
   record: ProcessosRecord | null;
   onBack: () => void;
+  onOpenFinanceiro: (recordId: string) => void;
+  onOpenCadastroForRecord: (recordId: string, options?: CadastroOpenOptions) => void;
 }) {
   const currencyFormatter = new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' });
   const percentFormatter = new Intl.NumberFormat('pt-BR', { minimumFractionDigits: 1, maximumFractionDigits: 1 });
@@ -2283,18 +2471,20 @@ function PrestacaoView({
             <span className="crumb is-current">{processNumber}</span>
           </div>
           <div className="prestacao-reference-head__actions">
-            <button type="button" className="prestacao-reference-filter">
+            <span className="prestacao-reference-filter" aria-label="Ano de referência">
               <span className="material-symbols-outlined" aria-hidden="true">calendar_month</span>
               {yearLabel}
-              <span className="material-symbols-outlined" aria-hidden="true">expand_more</span>
-            </button>
-            <button type="button" className="prestacao-reference-circle" aria-label="Ajuda">
-              <span className="material-symbols-outlined" aria-hidden="true">help</span>
-            </button>
-            <button type="button" className="prestacao-reference-circle prestacao-reference-circle--notify" aria-label="Notificações">
-              <span className="material-symbols-outlined" aria-hidden="true">notifications</span>
-              <strong>12</strong>
-            </button>
+            </span>
+            {record ? (
+              <button
+                type="button"
+                className="prestacao-reference-edit"
+                onClick={() => onOpenCadastroForRecord(record.id, { stepKey: 'prestacao-contas', returnView: 'prestacao' })}
+              >
+                <span className="material-symbols-outlined" aria-hidden="true">edit_square</span>
+                Editar etapa
+              </button>
+            ) : null}
             <span className="prestacao-reference-avatar">FC</span>
           </div>
         </div>
@@ -2306,7 +2496,7 @@ function PrestacaoView({
           </div>
           <div className="prestacao-reference-head__meta">
             <span>Última atualização: {latestUpdate}</span>
-            <button type="button" aria-label="Atualizar">
+            <button type="button" aria-label="Atualizar" onClick={() => document.getElementById('prestacao-resumo')?.scrollIntoView({ behavior: 'smooth', block: 'start' })}>
               <span className="material-symbols-outlined" aria-hidden="true">refresh</span>
             </button>
           </div>
@@ -2446,7 +2636,13 @@ function PrestacaoView({
                     </tbody>
                   </table>
                 </div>
-                <a className="prestacao-reference-link" href="#prestacao-encerramento">Gerenciar documentos</a>
+                <button
+                  type="button"
+                  className="prestacao-reference-link"
+                  onClick={() => onOpenCadastroForRecord(record.id, { stepKey: 'prestacao-contas', returnView: 'prestacao' })}
+                >
+                  Gerenciar documentos
+                </button>
               </section>
 
               <section id="prestacao-conciliacao" className="prestacao-reference-card">
@@ -2466,7 +2662,13 @@ function PrestacaoView({
                     <small>Por {prestacao?.responsavelPrestacao || 'Felipe Cabral'}</small>
                   </div>
                 </div>
-                <a className="prestacao-reference-link" href="#prestacao-encerramento">Ver conciliações anteriores</a>
+                <button
+                  type="button"
+                  className="prestacao-reference-link"
+                  onClick={() => onOpenFinanceiro(record.id)}
+                >
+                  Abrir painel financeiro
+                </button>
               </section>
             </div>
 
@@ -2495,7 +2697,13 @@ function PrestacaoView({
                   </div>
                 ))}
               </div>
-              <a className="prestacao-reference-link" href="#prestacao-documentos">Ver todos os documentos</a>
+              <button
+                type="button"
+                className="prestacao-reference-link"
+                onClick={() => onOpenCadastroForRecord(record.id, { stepKey: 'prestacao-contas', returnView: 'prestacao' })}
+              >
+                Ver todos os documentos
+              </button>
             </section>
 
             <section className="prestacao-reference-card">
@@ -2514,7 +2722,13 @@ function PrestacaoView({
                   </div>
                 ))}
               </div>
-              <a className="prestacao-reference-link" href="#prestacao-encerramento">Ver todas as pendências</a>
+              <button
+                type="button"
+                className="prestacao-reference-link"
+                onClick={() => onOpenCadastroForRecord(record.id, { stepKey: 'prestacao-contas', returnView: 'prestacao' })}
+              >
+                Ver todas as pendências
+              </button>
             </section>
 
             <section className="prestacao-reference-card">
@@ -2539,7 +2753,11 @@ function PrestacaoView({
               </div>
             </section>
 
-            <button type="button" className="prestacao-reference-finalize">
+            <button
+              type="button"
+              className="prestacao-reference-finalize"
+              onClick={() => record && onOpenCadastroForRecord(record.id, { stepKey: 'prestacao-contas', returnView: 'prestacao' })}
+            >
               <span className="material-symbols-outlined" aria-hidden="true">task_alt</span>
               <div>
                 <strong>{title.action}</strong>
@@ -2558,115 +2776,285 @@ function PrestacaoView({
   );
 }
 
-function buildPrestacaoChecklistEntries(record: ProcessosRecord | null, items: PrestacaoItemForm[]) {
-  const prestacao = record?.cadastro.prestacaoContas;
-  const any = (predicate: (item: PrestacaoItemForm) => boolean) => items.some(predicate);
-  const all = (predicate: (item: PrestacaoItemForm) => boolean) => items.length > 0 && items.every(predicate);
-  const statusFrom = (complete: boolean, partial: boolean) =>
-    complete ? ({ status: 'Enviado', tone: 'success' } as const) : partial ? ({ status: 'Parcial', tone: 'warning' } as const) : ({ status: 'Pendência', tone: 'danger' } as const);
+function FinancialView({
+  breadcrumb,
+  title,
+  record,
+  onBack,
+  onOpenPrestacao,
+  onOpenCadastroForRecord,
+}: {
+  breadcrumb: string[];
+  title: { title: string; subtitle: string; action: string };
+  record: ProcessosRecord | null;
+  onBack: () => void;
+  onOpenPrestacao: (recordId: string) => void;
+  onOpenCadastroForRecord: (recordId: string, options?: CadastroOpenOptions) => void;
+}) {
+  const currencyFormatter = new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' });
+  const percentFormatter = new Intl.NumberFormat('pt-BR', { minimumFractionDigits: 1, maximumFractionDigits: 1 });
 
-  return [
-    { title: 'Relatório de Execução do Objeto', ...statusFrom(any((item) => Boolean(item.relatorioExecucaoItem)), any((item) => Boolean(item.relatorioExecucaoItem))) },
-    { title: 'Relatório de Execução Financeira', ...statusFrom(Boolean(prestacao?.valorGlobalExecutado || any((item) => parsePlanMoney(item.valorExecutadoItem) > 0)), any((item) => parsePlanMoney(item.valorExecutadoItem) > 0)) },
-    { title: 'Comprovantes de Despesas', ...statusFrom(all((item) => Boolean(item.notaFiscalItem || item.reciboItem)), any((item) => Boolean(item.notaFiscalItem || item.reciboItem))) },
-    { title: 'Extratos Bancários', ...statusFrom(any((item) => Boolean(item.extratoItem)), any((item) => Boolean(item.extratoItem))) },
-    { title: 'Conciliação Bancária', ...statusFrom(Boolean(record?.cadastro.dadosGerais.saldoConta), any((item) => Boolean(item.ordemBancariaItem))) },
-    { title: 'Notas e Comprovantes Fiscais', ...statusFrom(all((item) => Boolean(item.notaFiscalItem)), any((item) => Boolean(item.notaFiscalItem))) },
-    { title: 'Declaração de Guarda de Documentos', ...statusFrom(Boolean(prestacao?.observacoesFinais), false) },
-    { title: 'Parecer do Controle Interno', ...statusFrom(any((item) => Boolean(item.parecerItem)), any((item) => Boolean(item.parecerItem))) },
+  if (!record) {
+    return (
+      <section className="view">
+        <article className="empty-module-state">
+          <strong>Nenhum processo selecionado</strong>
+          <p>Selecione um instrumento em Processos para acompanhar base financeira, contratações e saldo disponível.</p>
+        </article>
+      </section>
+    );
+  }
+
+  const dados = record.cadastro.dadosGerais;
+  const contratos = record.cadastro.processoContratacaoRegistros;
+  const summary = buildProcessoConsolidatedSummary(record);
+  const processNumber = dados.numeroInternoSeap || dados.numeroInstrumento || record.id;
+  const processTitle = dados.instrumento || 'Instrumento cadastrado';
+  const convenente = dados.setorCorrelacionado || 'Unidade não informada';
+  const latestUpdate = formatDashboardUpdatedAt(record.updatedAt);
+  const repasseParticipe = parsePlanMoney(dados.repasseParticipe || 'R$ 0,00');
+  const repasseSeap = parsePlanMoney(dados.repasseSeap || 'R$ 0,00');
+  const saldoConta = parsePlanMoney(dados.saldoConta || 'R$ 0,00');
+  const saldoEconomicidade = parsePlanMoney(dados.saldoEconomicidade || 'R$ 0,00');
+  const rendimentoExistente = parsePlanMoney(dados.rendimentoAplicacaoExistente || 'R$ 0,00');
+  const rendimentoAutorizado = parsePlanMoney(dados.rendimentoAplicacaoAutorizado || 'R$ 0,00');
+  const financeKpis = [
+    { label: 'Valor autorizado', value: currencyFormatter.format(summary.valorTotalAutorizado), hint: 'Base do plano aprovado', tone: 'is-info' },
+    { label: 'Valor contratado', value: currencyFormatter.format(summary.valorTotalContratado), hint: `${percentFormatter.format(summary.percentualContratado)}% comprometido`, tone: 'is-success' },
+    { label: 'Valor pago', value: currencyFormatter.format(summary.valorTotalPago), hint: `${percentFormatter.format(summary.percentualExecutado)}% executado`, tone: 'is-warning' },
+    { label: 'Saldo disponível', value: currencyFormatter.format(summary.saldoDisponivel), hint: 'Ainda livre para contratação', tone: 'is-danger' },
   ];
-}
-
-function prestacaoRowTone(status: string, percentual: number, item: PrestacaoItemForm) {
-  const normalized = status.toLowerCase();
-  const hasDocs = Boolean(item.notaFiscalItem || item.reciboItem || item.relatorioExecucaoItem);
-  if (normalized.includes('comprov') || normalized.includes('encerr') || (percentual >= 70 && hasDocs)) return 'success';
-  if (normalized.includes('pend') || percentual === 0) return 'danger';
-  return 'warning';
-}
-
-function prestacaoRowLabel(tone: 'success' | 'warning' | 'danger') {
-  if (tone === 'success') return 'Em dia';
-  if (tone === 'warning') return 'Atenção';
-  return 'Pendente';
-}
-
-function buildPrestacaoDocumentSummary(
-  checklist: Array<{ title: string; status: 'Enviado' | 'Parcial' | 'Pendência'; tone: 'success' | 'warning' | 'danger' }>,
-) {
-  const grouped = [
-    { label: 'Relatórios', required: 3, items: checklist.slice(0, 2) },
-    { label: 'Comprovantes de Despesas', required: 8, items: checklist.slice(2, 3) },
-    { label: 'Extratos e Conciliações', required: 4, items: checklist.slice(3, 5) },
-    { label: 'Declarações e Pareceres', required: 5, items: checklist.slice(6, 8) },
-    { label: 'Outros Documentos', required: 4, items: checklist.slice(5, 6) },
-  ];
-
-  return grouped.map((group) => {
-    const score = group.items.reduce((sum, item) => sum + (item.status === 'Enviado' ? 1 : item.status === 'Parcial' ? 0.5 : 0), 0);
-    const sent = Math.min(group.required, Math.max(0, Math.round((score / Math.max(group.items.length, 1)) * group.required)));
-    const tone = group.items.some((item) => item.tone === 'danger')
-      ? 'danger'
-      : group.items.some((item) => item.tone === 'warning')
-        ? 'warning'
-        : 'success';
+  const repasseRows = [
+    ['Repasse Partícipe', repasseParticipe],
+    ['Repasse SEAP', repasseSeap],
+    ['Saldo em conta', saldoConta],
+    ['Saldo de economicidade', saldoEconomicidade],
+    ['Rendimento existente', rendimentoExistente],
+    ['Rendimento autorizado', rendimentoAutorizado],
+  ] as const;
+  const contractRows = contratos.map((contrato) => {
+    const linkedTotal = (contrato.itensVinculados ?? []).reduce((sum, item) => sum + parsePlanMoney(item.valorTotalContratado), 0);
+    const contratado = linkedTotal > 0 ? linkedTotal : parsePlanMoney(contrato.valorTotalContratado);
+    const pago = parsePlanMoney(contrato.obValor || 'R$ 0,00');
     return {
-      label: group.label,
-      required: group.required,
-      sent,
-      tone,
-      status: tone === 'success' ? 'Concluído' : tone === 'warning' ? 'Parcial' : 'Pendência',
+      id: contrato.id,
+      processoSei: contrato.processoSei || contrato.id,
+      contratoNumero: contrato.contratoNumero || 'Sem contrato',
+      itens: (contrato.itensVinculados ?? []).map((item) => item.itemDescricao).join(', ') || 'Sem vínculo',
+      contratado,
+      pago,
+      saldo: Math.max(contratado - pago, 0),
+      status: contrato.statusProcesso || 'Sem status',
     };
   });
-}
+  const pendingContracts = contractRows.filter((item) => item.saldo > 0).length;
+  const financeChecklist = [
+    { title: 'Repasse SEAP informado', status: dados.repasseSeap ? 'Concluído' : 'Pendente', tone: dados.repasseSeap ? 'success' : 'danger' },
+    { title: 'Saldo atualizado', status: dados.dataAtualizacaoSaldoConta ? dados.dataAtualizacaoSaldoConta : 'Pendente', tone: dados.dataAtualizacaoSaldoConta ? 'success' : 'warning' },
+    { title: 'Contratações vinculadas', status: `${summary.totalContratacoes} registro(s)`, tone: summary.totalContratacoes ? 'success' : 'danger' },
+    { title: 'Ordens bancárias registradas', status: `${contractRows.filter((item) => item.pago > 0).length} com pagamento`, tone: contractRows.some((item) => item.pago > 0) ? 'success' : 'warning' },
+  ] as const;
 
-function buildPrestacaoPendings(
-  checklist: Array<{ title: string; status: 'Enviado' | 'Parcial' | 'Pendência'; tone: 'success' | 'warning' | 'danger' }>,
-  items: PrestacaoItemForm[],
-) {
-  const base = checklist
-    .filter((item) => item.tone !== 'success')
-    .slice(0, 3)
-    .map((item, index) => ({
-      title: item.title,
-      detail: item.status === 'Parcial' ? 'Documentação incompleta' : `${Math.max(1, items.filter((entry) => !entry.notaFiscalItem && !entry.reciboItem).length)} documento(s) pendente(s)`,
-      deadline: `${[12, 9, 7][index] ?? 5} dias`,
-    }));
+  return (
+    <section className="view prestacao-reference-page">
+      <header className="prestacao-reference-head">
+        <div className="prestacao-reference-head__top">
+          <div className="crumbs prestacao-reference-crumbs">
+            <span className="crumb">Início</span>
+            <span className="crumb">{breadcrumb[breadcrumb.length - 1] ?? 'Financeiro'}</span>
+            <span className="crumb is-current">{processNumber}</span>
+          </div>
+          <div className="prestacao-reference-head__actions">
+            <span className="prestacao-reference-filter" aria-label="Contexto financeiro">
+              <span className="material-symbols-outlined" aria-hidden="true">account_balance_wallet</span>
+              Financeiro
+            </span>
+            <button
+              type="button"
+              className="prestacao-reference-edit"
+              onClick={() => onOpenCadastroForRecord(record.id, { stepKey: 'dados-financeiros', returnView: 'financeiro' })}
+            >
+              <span className="material-symbols-outlined" aria-hidden="true">edit_square</span>
+              Editar base
+            </button>
+            <span className="prestacao-reference-avatar">FC</span>
+          </div>
+        </div>
 
-  return base.length
-    ? base
-    : [{ title: 'Sem pendências críticas', detail: 'Documentação principal em conformidade', deadline: 'No prazo' }];
-}
+        <div className="prestacao-reference-head__row">
+          <div>
+            <h2>{title.title}</h2>
+            <p>Gerencie repasses, saldo, execução financeira e pagamento das contratações vinculadas ao processo.</p>
+          </div>
+          <div className="prestacao-reference-head__meta">
+            <span>Última atualização: {latestUpdate}</span>
+          </div>
+        </div>
+      </header>
 
-function buildPrestacaoProgressLegend(
-  items: Array<{ tone: 'success' | 'warning' | 'danger'; percentual: number }>,
-  pendingDocuments: number,
-) {
-  const success = items.filter((item) => item.tone === 'success').length;
-  const warning = items.filter((item) => item.tone === 'warning').length;
-  const danger = Math.max(items.filter((item) => item.tone === 'danger').length, pendingDocuments ? 1 : 0);
-  const total = Math.max(success + warning + danger, 1);
-  const successPercent = Math.round((success / total) * 100);
-  const warningPercent = Math.round((warning / total) * 100);
-  const dangerPercent = Math.max(0, 100 - successPercent - warningPercent);
-  return [
-    { label: 'Concluído', percent: successPercent, tone: 'success' as const },
-    { label: 'Em andamento', percent: warningPercent, tone: 'warning' as const },
-    { label: 'Pendências', percent: dangerPercent, tone: 'danger' as const },
-  ];
-}
+      <section className="prestacao-reference-layout">
+        <aside className="prestacao-reference-left">
+          <button type="button" className="prestacao-reference-back" onClick={onBack}>
+            <span className="material-symbols-outlined" aria-hidden="true">arrow_back</span>
+            Voltar para lista
+          </button>
 
-function buildPrestacaoProgressDonut(items: Array<{ percent: number; tone: 'success' | 'warning' | 'danger' }>) {
-  const colors = { success: '#67c26f', warning: '#f4b63c', danger: '#e45b5b' };
-  let cursor = 0;
-  return items
-    .map((item, index) => {
-      const start = cursor;
-      const end = index === items.length - 1 ? 100 : cursor + item.percent;
-      cursor = end;
-      return `${colors[item.tone]} ${start}% ${end}%`;
-    })
-    .join(', ');
+          <article className="prestacao-reference-process-card">
+            <span>Processo</span>
+            <h3>{processNumber}</h3>
+            <mark>{dados.status || 'Em execução'}</mark>
+            <dl>
+              <div><dt>Instrumento</dt><dd>{processTitle}</dd></div>
+              <div><dt>Convenente</dt><dd>{convenente}</dd></div>
+              <div><dt>Repasse SEAP</dt><dd>{currencyFormatter.format(repasseSeap)}</dd></div>
+              <div><dt>Saldo atual</dt><dd>{currencyFormatter.format(saldoConta || summary.saldoDisponivel)}</dd></div>
+            </dl>
+          </article>
+
+          <nav className="prestacao-reference-local-nav" aria-label="Navegação do financeiro">
+            <a href="#financeiro-resumo" className="is-active">
+              <span className="material-symbols-outlined" aria-hidden="true">monitoring</span>
+              <div><strong>Resumo</strong><small>KPIs financeiros</small></div>
+            </a>
+            <a href="#financeiro-repasses">
+              <span className="material-symbols-outlined" aria-hidden="true">account_balance</span>
+              <div><strong>Repasses</strong><small>Base e saldo</small></div>
+            </a>
+            <a href="#financeiro-contratacoes">
+              <span className="material-symbols-outlined" aria-hidden="true">shopping_cart</span>
+              <div><strong>Contratações</strong><small>Pagamentos e saldo</small></div>
+            </a>
+          </nav>
+        </aside>
+
+        <div className="prestacao-reference-main">
+          <section id="financeiro-resumo" className="prestacao-reference-card">
+            <div className="prestacao-reference-card__head">
+              <h3>Resumo financeiro</h3>
+            </div>
+            <div className="prestacao-reference-metrics">
+              {financeKpis.map((item) => (
+                <article key={item.label} className={`prestacao-reference-metric ${item.tone}`}>
+                  <span className="material-symbols-outlined" aria-hidden="true">payments</span>
+                  <div><small>{item.label}</small><strong>{item.value}</strong><em>{item.hint}</em></div>
+                </article>
+              ))}
+            </div>
+          </section>
+
+          <section id="financeiro-repasses" className="prestacao-reference-card">
+            <div className="prestacao-reference-card__head">
+              <h3>Base de repasse e saldo</h3>
+            </div>
+            <dl className="prestacao-reference-financial">
+              {repasseRows.map(([label, value]) => (
+                <div key={label}>
+                  <dt>{label}</dt>
+                  <dd>{currencyFormatter.format(value)}</dd>
+                </div>
+              ))}
+              <div className="is-total">
+                <dt>Saldo a executar nas contratações</dt>
+                <dd>{currencyFormatter.format(summary.saldoExecutar)}</dd>
+              </div>
+            </dl>
+          </section>
+
+          <section id="financeiro-contratacoes" className="prestacao-reference-card">
+            <div className="prestacao-reference-card__head">
+              <h3>Contratações e pagamentos</h3>
+            </div>
+            <div className="prestacao-reference-table-wrap">
+              <table className="prestacao-reference-table prestacao-reference-table--docs">
+                <thead>
+                  <tr>
+                    <th>Processo SEI</th>
+                    <th>Contrato</th>
+                    <th>Itens vinculados</th>
+                    <th>Contratado</th>
+                    <th>Pago (OB)</th>
+                    <th>Saldo</th>
+                    <th>Status</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {contractRows.length ? contractRows.map((item) => (
+                    <tr key={item.id}>
+                      <td>{item.processoSei}</td>
+                      <td>{item.contratoNumero}</td>
+                      <td>{item.itens}</td>
+                      <td>{currencyFormatter.format(item.contratado)}</td>
+                      <td>{currencyFormatter.format(item.pago)}</td>
+                      <td>{currencyFormatter.format(item.saldo)}</td>
+                      <td>{item.status}</td>
+                    </tr>
+                  )) : (
+                    <tr>
+                      <td colSpan={7}>Nenhuma contratação cadastrada.</td>
+                    </tr>
+                  )}
+                </tbody>
+              </table>
+            </div>
+          </section>
+        </div>
+
+        <aside className="prestacao-reference-right">
+          <section className="prestacao-reference-card">
+            <div className="prestacao-reference-card__head">
+              <h3>Checklist financeiro</h3>
+            </div>
+            <div className="prestacao-reference-checklist">
+              {financeChecklist.map((item) => (
+                <div key={item.title} className="prestacao-reference-checklist__item">
+                  <span className={`prestacao-reference-dot is-${item.tone}`} />
+                  <strong>{item.title}</strong>
+                  <em className={`is-${item.tone}`}>{item.status}</em>
+                </div>
+              ))}
+            </div>
+          </section>
+
+          <section className="prestacao-reference-card">
+            <div className="prestacao-reference-card__head">
+              <h3>Leitura executiva</h3>
+            </div>
+            <div className="prestacao-reference-pending-list">
+              <div className="prestacao-reference-pending">
+                <div>
+                  <strong>Contratações com saldo a executar</strong>
+                  <small>Registros contratados ainda sem liquidação integral.</small>
+                </div>
+                <span>{pendingContracts}</span>
+              </div>
+              <div className="prestacao-reference-pending">
+                <div>
+                  <strong>Repasse SEAP</strong>
+                  <small>{dados.situacaoRepasseSeap || 'Sem situação informada'}</small>
+                </div>
+                <span>{currencyFormatter.format(repasseSeap)}</span>
+              </div>
+              <div className="prestacao-reference-pending">
+                <div>
+                  <strong>Saldo disponível para novas contratações</strong>
+                  <small>Resultado do plano menos contratos já vinculados.</small>
+                </div>
+                <span>{currencyFormatter.format(summary.saldoDisponivel)}</span>
+              </div>
+            </div>
+          </section>
+
+          <button type="button" className="prestacao-reference-finalize" onClick={() => onOpenPrestacao(record.id)}>
+            <span className="material-symbols-outlined" aria-hidden="true">fact_check</span>
+            <div>
+              <strong>Ir para prestação</strong>
+              <small>Continuar na conferência documental e encerramento</small>
+            </div>
+          </button>
+        </aside>
+      </section>
+    </section>
+  );
 }
 
 export default App;

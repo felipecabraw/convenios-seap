@@ -2,27 +2,22 @@ import type { CSSProperties } from 'react';
 import {
   CadastroFieldConfig,
   DadosGeraisForm,
-  dadosGeraisFieldGroups,
+  dadosFinanceirosFieldGroups,
 } from '../../../data/cadastro';
-import { CalculatedField, CurrencyField, DateField, FileField, FormSection, SelectField, TextAreaField, TextField } from '../fields';
+import {
+  CalculatedField,
+  CurrencyField,
+  DateField,
+  FormSection,
+  SelectField,
+  TextField,
+} from '../fields';
 
 function renderField(
   field: CadastroFieldConfig<keyof DadosGeraisForm>,
   data: DadosGeraisForm,
   onChange: <K extends keyof DadosGeraisForm>(field: K, value: DadosGeraisForm[K]) => void,
 ) {
-  if (field.key === 'numeroInternoSeap') {
-    return (
-      <CalculatedField
-        key={field.key}
-        label={field.label}
-        value={data.numeroInternoSeap}
-        hint="Gerado automaticamente pelo sistema"
-        span={field.span}
-      />
-    );
-  }
-
   const value = data[field.key];
 
   switch (field.kind) {
@@ -60,30 +55,6 @@ function renderField(
           onChange={(nextValue) => onChange(field.key, nextValue)}
         />
       );
-    case 'textarea':
-      return (
-        <TextAreaField
-          key={field.key}
-          label={field.label}
-          value={value}
-          hint={field.hint}
-          placeholder={field.placeholder}
-          span={field.span}
-          onChange={(nextValue) => onChange(field.key, nextValue)}
-        />
-      );
-    case 'file':
-      return (
-        <FileField
-          key={field.key}
-          label={field.label}
-          value={value}
-          hint={field.hint}
-          accept={field.accept}
-          span={field.span}
-          onChange={(nextValue) => onChange(field.key, nextValue)}
-        />
-      );
     case 'calculated':
       return <CalculatedField key={field.key} label={field.label} value={value} hint={field.hint} span={field.span} />;
     default:
@@ -100,23 +71,9 @@ function renderField(
   }
 }
 
-const dadosGeraisSectionAccents = [
-  '#1c4071',
-  '#c78c41',
-  '#1f7a49',
-  '#5c7297',
-  '#0f766e',
-  '#7c3aed',
-  '#b42318',
-  '#4f73a6',
-  '#0891b2',
-  '#8b5cf6',
-  '#d94b64',
-  '#a16207',
-  '#64748b',
-] as const;
+const financialSectionAccents = ['#1f7a49', '#0f5b8f', '#c78c41', '#6d7684'] as const;
 
-export function DadosGeraisStep({
+export function DadosFinanceirosStep({
   data,
   onChange,
 }: {
@@ -125,38 +82,38 @@ export function DadosGeraisStep({
 }) {
   const overview = [
     {
-      key: 'status',
+      key: 'valor-global',
+      tone: 'success',
+      label: 'Valor Global',
+      value: data.valorGlobal || 'R$ 0,00',
+      detail: data.naturezaDespesa || 'Natureza da despesa',
+    },
+    {
+      key: 'repasse-seap',
       tone: 'primary',
-      label: 'Status operacional',
-      value: data.status || 'A definir',
-      detail: data.alertas || 'Sem alerta ativo',
+      label: 'Repasse SEAP',
+      value: data.repasseSeap || 'R$ 0,00',
+      detail: data.situacaoRepasseSeap || 'Situação do repasse',
     },
     {
-      key: 'clausula',
-      tone: 'danger',
-      label: 'Cláusula suspensiva',
-      value: data.diasRestanteClausulaSuspensiva || 'A definir',
-      detail: data.dataFinalClausulaSuspensiva || 'Defina a data final',
-    },
-    {
-      key: 'vigencia',
+      key: 'saldo-conta',
       tone: 'secondary',
-      label: 'Vigência',
-      value: data.diasRestantes || 'A definir',
-      detail: data.vigenciaFinal || 'Defina a vigência final',
+      label: 'Saldo em conta',
+      value: data.saldoConta || 'R$ 0,00',
+      detail: data.dataAtualizacaoSaldoConta || 'Atualize a data do saldo',
     },
     {
-      key: 'repasse',
-      tone: data.repasseFinanceiro === 'Não' ? 'warning' : 'success',
-      label: 'Repasse financeiro',
-      value: data.repasseFinanceiro || 'A definir',
-      detail: data.instrumento || 'Instrumento selecionado',
+      key: 'execucao',
+      tone: 'warning',
+      label: 'Execução',
+      value: data.percentualExecutado || '0,0%',
+      detail: data.recursoExecutado || 'Recurso executado',
     },
   ] as const;
 
   return (
     <>
-      <section className="dados-gerais-overview" aria-label="Resumo do cadastro">
+      <section className="dados-gerais-overview" aria-label="Resumo financeiro do instrumento">
         {overview.map((card) => (
           <article key={card.key} className={`dados-gerais-overview__card dados-gerais-overview__card--${card.tone}`}>
             <span>{card.label}</span>
@@ -166,8 +123,8 @@ export function DadosGeraisStep({
         ))}
       </section>
 
-      {dadosGeraisFieldGroups.map((group, index) => {
-        const accent = dadosGeraisSectionAccents[index % dadosGeraisSectionAccents.length];
+      {dadosFinanceirosFieldGroups.map((group, index) => {
+        const accent = financialSectionAccents[index % financialSectionAccents.length];
 
         return (
           <FormSection

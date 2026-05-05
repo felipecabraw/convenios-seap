@@ -3,6 +3,7 @@ import {
   AjustePtForm,
   cadastroInitialFormData,
   CadastroInstrumentoFormData,
+  CadastroStepKey,
   cadastroSteps,
   DadosGeraisForm,
   DocumentoForm,
@@ -19,11 +20,13 @@ import {
 } from '../../data/cadastro';
 import { CadastroStepper } from './CadastroStepper';
 import { AjustePtStep } from './steps/AjustePtStep';
+import { DadosFinanceirosStep } from './steps/DadosFinanceirosStep';
 import { DadosGeraisStep } from './steps/DadosGeraisStep';
 import { DocumentosStep } from './steps/DocumentosStep';
 import { FiltrosStep } from './steps/FiltrosStep';
 import { GestaoInstrumentoStep } from './steps/GestaoInstrumentoStep';
 import { PlanoTrabalhoStep } from './steps/PlanoTrabalhoStep';
+import { PrestacaoContasStep } from './steps/PrestacaoContasStep';
 import { ProcessoContratacaoStep } from './steps/ProcessoContratacaoStep';
 
 function parseCurrencyValue(value: string) {
@@ -129,20 +132,23 @@ export function CadastroInstrumentoPage({
   onSave,
   onCancel,
   initialData,
+  initialStepKey,
 }: {
   onSave: (data: CadastroInstrumentoFormData) => void;
   onCancel?: () => void;
   initialData?: CadastroInstrumentoFormData;
+  initialStepKey?: CadastroStepKey;
 }) {
   const steps = cadastroSteps;
   const firstStep = steps[0]!;
-  const [activeStep, setActiveStep] = useState(0);
+  const initialStepIndex = initialStepKey ? Math.max(steps.findIndex((step) => step.key === initialStepKey), 0) : 0;
+  const [activeStep, setActiveStep] = useState(initialStepIndex);
   const [formData, setFormData] = useState<CadastroInstrumentoFormData>(initialData ?? cadastroInitialFormData);
 
   useEffect(() => {
     setFormData(initialData ?? cadastroInitialFormData);
-    setActiveStep(0);
-  }, [initialData]);
+    setActiveStep(initialStepIndex);
+  }, [initialData, initialStepIndex]);
 
   const calculated = useMemo(() => {
     const totalAutorizado = formData.planoTrabalho.itens.reduce(
@@ -295,6 +301,36 @@ export function CadastroInstrumentoPage({
     }));
   }
 
+  function updatePrestacaoGlobal<K extends keyof CadastroInstrumentoFormData['prestacaoContas']>(
+    field: K,
+    value: CadastroInstrumentoFormData['prestacaoContas'][K],
+  ) {
+    setFormData((current) => ({
+      ...current,
+      prestacaoContas: {
+        ...current.prestacaoContas,
+        [field]: value,
+      },
+    }));
+  }
+
+  function updatePrestacaoItem(itemId: string, field: keyof PrestacaoItemForm, value: string) {
+    setFormData((current) => ({
+      ...current,
+      prestacaoContas: {
+        ...current.prestacaoContas,
+        itens: syncPrestacaoItems(current.planoTrabalho.itens, current.prestacaoContas.itens).map((item) =>
+          item.itemPlanoId === itemId
+            ? {
+                ...item,
+                [field]: value,
+              }
+            : item,
+        ),
+      },
+    }));
+  }
+
   const syncCalculatedFields = {
     ...formData,
     processoContratacao: {
@@ -343,6 +379,8 @@ export function CadastroInstrumentoPage({
     switch (stepKey) {
       case 'dados-gerais':
         return <DadosGeraisStep data={syncCalculatedFields.dadosGerais} onChange={updateDadosGerais} />;
+      case 'dados-financeiros':
+        return <DadosFinanceirosStep data={syncCalculatedFields.dadosGerais} onChange={updateDadosGerais} />;
       case 'plano-trabalho':
         return (
           <PlanoTrabalhoStep
@@ -367,6 +405,20 @@ export function CadastroInstrumentoPage({
         return <GestaoInstrumentoStep data={formData.gestaoInstrumento} onChange={updateGestao} />;
       case 'ajuste-pt':
         return <AjustePtStep data={formData.ajustePt} onChange={updateAjustePt} />;
+      case 'prestacao-contas':
+        return (
+          <PrestacaoContasStep
+            data={syncCalculatedFields.prestacaoContas}
+            items={resolvedPrestacaoItems}
+            totalGlobal={syncCalculatedFields.dadosGerais.valorGlobal}
+            footer={{
+              status: syncCalculatedFields.prestacaoContas.statusPrestacaoGlobal || 'Não iniciada',
+              deadline: syncCalculatedFields.dadosGerais.vigenciaFinal || 'A definir',
+            }}
+            onGlobalChange={updatePrestacaoGlobal}
+            onItemChange={updatePrestacaoItem}
+          />
+        );
       case 'documentos':
         return <DocumentosStep data={formData.documentos} onChange={updateDocumentos} />;
       case 'filtros':
