@@ -1,0 +1,5 @@
+export const APP_NAME = 'SIGIC'
+export const APP_FULL_NAME = 'Sistema de Gestão de Instrumentos e Convênios'
+export const LOCAL_DATABASE_KEY = 'sigic.local.database.v1'
+export const LOCAL_AUTH_KEY = 'sigic.local.auth.v1'
+export const NEXT_STEP_MESSAGE = 'Funcionalidade prevista para próxima etapa'
