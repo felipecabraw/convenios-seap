@@ -1,11 +1,9 @@
 ﻿export type CadastroStepKey =
   | 'dados-gerais'
-  | 'dados-financeiros'
   | 'plano-trabalho'
   | 'processo-contratacao'
   | 'gestao-instrumento'
   | 'ajuste-pt'
-  | 'prestacao-contas'
   | 'documentos'
   | 'filtros';
 
@@ -481,12 +479,7 @@ export const cadastroOptionSets = {
 
 export const cadastroSteps: CadastroStepDefinition[] = [
   { key: 'dados-gerais', label: 'Dados Gerais', description: 'Informações básicas do processo.', scope: 'inicial' },
-  { key: 'dados-financeiros', label: 'Dados Financeiros', description: 'Base financeira, repasses, saldo e execução.', scope: 'inicial' },
   { key: 'plano-trabalho', label: 'Plano de Trabalho', description: 'Objetivos, metas e atividades.', scope: 'inicial' },
-  { key: 'processo-contratacao', label: 'Contratações', description: 'Vínculos contratuais, NE, SEI e entregas.', scope: 'acompanhamento' },
-  { key: 'gestao-instrumento', label: 'Gestão do Instrumento', description: 'Governança, prorrogações, suplementações e análise.', scope: 'governanca' },
-  { key: 'ajuste-pt', label: 'Ajuste do Plano', description: 'Fluxo de ajuste e documento autorizador.', scope: 'governanca' },
-  { key: 'prestacao-contas', label: 'Prestação de Contas', description: 'Consolidação global e prestação por item.', scope: 'acompanhamento' },
   { key: 'documentos', label: 'Documentos', description: 'Anexos obrigatórios.', scope: 'inicial' },
   { key: 'filtros', label: 'Filtros', description: 'Regras e configurações.', scope: 'inicial' },
 ];
@@ -682,35 +675,6 @@ export const dadosGeraisFieldGroups: CadastroFieldGroup<keyof DadosGeraisForm>[]
       { key: 'rendimentoAplicacaoAutorizado', label: 'Rendimento de Aplicação Autorizado', kind: 'currency' },
       { key: 'recursoExecutado', label: 'Recurso Executado', kind: 'currency' },
       { key: 'percentualExecutado', label: '% Executado', kind: 'calculated', hint: 'Campo calculado' },
-    ],
-  },
-];
-
-export const dadosFinanceirosFieldGroups: CadastroFieldGroup<keyof DadosGeraisForm>[] = [
-  {
-    title: 'Base financeira',
-    description: 'Conta bancária, natureza da despesa, valor global e configuração do repasse.',
-    fields: [
-      { key: 'banco', label: 'Banco', kind: 'text' },
-      { key: 'contaBancaria', label: 'Conta bancária', kind: 'text' },
-      { key: 'naturezaDespesa', label: 'Natureza da despesa', kind: 'text', span: 'half' },
-      { key: 'valorGlobal', label: 'Valor Global', kind: 'currency', span: 'half' },
-      { key: 'repasseParticipe', label: 'Repasse Partícipe', kind: 'currency' },
-      { key: 'repasseSeap', label: 'Repasse SEAP', kind: 'currency' },
-    ],
-  },
-  {
-    title: 'Execução e saldo',
-    description: 'Situação do repasse, saldo de conta, economicidade e percentual executado.',
-    fields: [
-      { key: 'situacaoRepasseSeap', label: 'Situação do repasse SEAP', kind: 'select', options: cadastroOptionSets.situacaoRepasseSeap },
-      { key: 'saldoConta', label: 'Saldo em conta', kind: 'currency' },
-      { key: 'dataAtualizacaoSaldoConta', label: 'Data da atualização do saldo', kind: 'date' },
-      { key: 'saldoEconomicidade', label: 'Saldo de economicidade', kind: 'calculated' },
-      { key: 'rendimentoAplicacaoExistente', label: 'Rendimento existente', kind: 'calculated' },
-      { key: 'rendimentoAplicacaoAutorizado', label: 'Rendimento autorizado', kind: 'currency' },
-      { key: 'recursoExecutado', label: 'Recurso executado', kind: 'currency' },
-      { key: 'percentualExecutado', label: 'Percentual executado', kind: 'calculated' },
     ],
   },
 ];
@@ -1121,12 +1085,10 @@ function requiredFields<T extends object, K extends keyof T>(
 
 const validationStepLabels: Record<CadastroStepKey, string> = {
   'dados-gerais': 'Dados Gerais',
-  'dados-financeiros': 'Dados Financeiros',
   'plano-trabalho': 'Plano de Ação',
   'processo-contratacao': 'Processo de Contratação',
   'gestao-instrumento': 'Gestão do Instrumento',
   'ajuste-pt': 'Ajuste do Plano',
-  'prestacao-contas': 'Prestação de Contas',
   'documentos': 'Documentos',
   'filtros': 'Filtros Gerenciais',
 };
@@ -1168,7 +1130,6 @@ export function validateCadastroForm(data: CadastroInstrumentoFormData): Cadastr
         'valorGlobal',
       ],
     ),
-    'dados-financeiros': [],
     'plano-trabalho': data.planoTrabalho.itens.length
       ? data.planoTrabalho.itens.flatMap((item, index) =>
           requiredFields(
@@ -1233,7 +1194,6 @@ export function validateCadastroForm(data: CadastroInstrumentoFormData): Cadastr
       },
       ['status'],
     ),
-    'prestacao-contas': [],
     'documentos': [],
     'filtros': [],
   };

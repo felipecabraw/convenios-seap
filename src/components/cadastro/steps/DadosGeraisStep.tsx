@@ -11,18 +11,6 @@ function renderField(
   data: DadosGeraisForm,
   onChange: <K extends keyof DadosGeraisForm>(field: K, value: DadosGeraisForm[K]) => void,
 ) {
-  if (field.key === 'numeroInternoSeap') {
-    return (
-      <CalculatedField
-        key={field.key}
-        label={field.label}
-        value={data.numeroInternoSeap}
-        hint="Gerado automaticamente pelo sistema"
-        span={field.span}
-      />
-    );
-  }
-
   const value = data[field.key];
 
   switch (field.kind) {

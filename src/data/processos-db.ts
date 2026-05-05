@@ -469,60 +469,7 @@ export function buildExecutionBars(records: ProcessosRecord[]): DashboardBar[] {
 }
 
 export function buildPlanRows(record: ProcessosRecord) {
-  return record.cadastro.planoTrabalho.itens.map((item, index) => {
-    const linkedContracts = record.cadastro.processoContratacaoRegistros.filter((contract) =>
-      (contract.itensVinculados ?? []).some((linkedItem) => linkedItem.planoItemId === item.id),
-    );
-    const contractedValue = linkedContracts.reduce((sum, contract) => {
-      const linkedTotal = (contract.itensVinculados ?? [])
-        .filter((linkedItem) => linkedItem.planoItemId === item.id)
-        .reduce((linkedSum, linkedItem) => linkedSum + parseMoney(linkedItem.valorTotalContratado), 0);
-      return sum + linkedTotal;
-    }, 0);
-    const totalValue = parseMoney(item.valorTotalAutorizado);
-    const remainingValue = Math.max(totalValue - contractedValue, 0);
-    const normalizedStatus = normalizeText(item.statusItemPlano || '');
-    const status =
-      normalizedStatus.includes('exec') || normalizedStatus.includes('concl')
-        ? 'Executado'
-        : contractedValue <= 0
-          ? 'Sem contratação'
-          : remainingValue <= 0.01
-            ? 'Totalmente contratado'
-            : 'Parcialmente contratado';
-    const statusTone =
-      status === 'Executado'
-        ? 'is-done'
-        : status === 'Sem contratação'
-          ? 'is-no'
-          : remainingValue <= 0.01
-            ? 'is-yes'
-            : 'is-warning';
-
-    return {
-      id: item.id,
-      order: String(index + 1).padStart(2, '0'),
-      category: item.categoriaItemObjeto || 'A definir',
-      item: item.item || 'Sem descrição',
-      quantity: item.quantidade || '?',
-      unit: item.unidadeMedida || '?',
-      unitValue: item.valorUnitarioAutorizado || 'A definir',
-      totalValue: item.valorTotalAutorizado || 'A definir',
-      tag: item.frutoDeAjuste || 'Não',
-      document: item.documentoAutorizacao || 'Sem documento',
-      monitored: item.monitorado || 'Não',
-      contractedValue,
-      contractedValueFormatted: formatCurrency(contractedValue),
-      remainingValue,
-      remainingValueFormatted: formatCurrency(remainingValue),
-      linkedContractsCount: linkedContracts.length,
-      linkedSummary: linkedContracts.length
-        ? linkedContracts.map((contract) => contract.processoSei || contract.contratoNumero || contract.id).join(', ')
-        : 'Sem vínculo',
-      status,
-      statusTone,
-    };
-  });
+  return record.cadastro.planoTrabalho.itens.map((item) => ({ category: item.categoriaItemObjeto || 'A definir', item: item.item || 'Sem descrição', quantity: item.quantidade || '?', unit: item.unidadeMedida || '?', unitValue: item.valorUnitarioAutorizado || 'A definir', totalValue: item.valorTotalAutorizado || 'A definir', tag: item.frutoDeAjuste || 'Não', document: item.documentoAutorizacao || 'Sem documento', monitored: item.monitorado || 'Não' }));
 }
 
 export function buildContractDocuments(record: ProcessosRecord) {
